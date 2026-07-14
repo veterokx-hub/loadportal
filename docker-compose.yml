@@ -1,0 +1,89 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: loadtest
+      POSTGRES_USER: loadtest
+      POSTGRES_PASSWORD: loadtest
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loadtest -d loadtest"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  analyzer:
+    build: ./analyzer
+    environment:
+      APP_PORT: "8000"
+      ANALYZER_VERIFY_SSL: "${ANALYZER_VERIFY_SSL:-false}"
+      ANALYZER_CA_BUNDLE: "${ANALYZER_CA_BUNDLE:-}"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  k6-generator:
+    build: ./k6-generator
+    environment:
+      APP_PORT: "8001"
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  jmeter-builder:
+    build: ./jmeter-builder
+    environment:
+      APP_PORT: "8081"
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+
+  constructor:
+    build: ./constructor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      analyzer:
+        condition: service_started
+      k6-generator:
+        condition: service_started
+      jmeter-builder:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/loadtest
+      SPRING_DATASOURCE_USERNAME: loadtest
+      SPRING_DATASOURCE_PASSWORD: loadtest
+      ANALYZER_BASE_URL: http://analyzer:8000
+      K6_GENERATOR_BASE_URL: http://k6-generator:8001
+      JMETER_BUILDER_BASE_URL: http://jmeter-builder:8081
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - constructor
+    environment:
+      CORE_API_BASE_URL: http://constructor:8080
+      NEXT_PUBLIC_CORE_API_BASE_URL: http://localhost:8080
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:

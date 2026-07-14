@@ -1,0 +1,33 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: constructor
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/loadtest}
+    username: ${SPRING_DATASOURCE_USERNAME:loadtest}
+    password: ${SPRING_DATASOURCE_PASSWORD:loadtest}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+    open-in-view: false
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: non_null
+    mapper:
+      accept-case-insensitive-enums: true
+
+# Локальные defaults (docker-compose / k8s переопределяют через env).
+# При включённом Consul в UI URL берутся из KV/Catalog, если override пуст.
+analyzer:
+  base-url: ${ANALYZER_BASE_URL:http://localhost:8000}
+
+k6-generator:
+  base-url: ${K6_GENERATOR_BASE_URL:http://localhost:8001}
+
+jmeter-builder:
+  base-url: ${JMETER_BUILDER_BASE_URL:http://localhost:8081}

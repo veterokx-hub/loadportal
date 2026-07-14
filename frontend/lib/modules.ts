@@ -1,0 +1,91 @@
+export type AppModuleId =
+  | "scenario"
+  | "environment"
+  | "run"
+  | "analysis"
+  | "report";
+
+export interface AppModule {
+  id: AppModuleId;
+  /** Короткое имя в навигации */
+  nav: string;
+  /** Полный заголовок раздела */
+  title: string;
+  /** Одна строка — зачем раздел */
+  blurb: string;
+  /** Доступен ли раздел сейчас */
+  available: boolean;
+  /** Что появится (для экрана «скоро») */
+  preview: string[];
+}
+
+/**
+ * Глобальные разделы портала (модули платформы).
+ * Раздел 2: «Стенд» — коротко и понятно для НТ (SUT + stubs + проверка готовности).
+ */
+export const APP_MODULES: AppModule[] = [
+  {
+    id: "scenario",
+    nav: "Сценарий",
+    title: "Подготовка сценария",
+    blurb: "Источник API → параметры → корреляция → сборка JMeter / k6",
+    available: true,
+    preview: [],
+  },
+  {
+    id: "environment",
+    nav: "Стенд",
+    title: "Стенд",
+    blurb: "Объект теста и заглушки: развернуть, проверить, получить baseUrl",
+    available: false,
+    preview: [
+      "Развёртывание тестируемого сервиса в изолированном namespace",
+      "WireMock / заглушки внешних систем",
+      "Проверка health и готовности стенда",
+      "Стабильный baseUrl для запуска нагрузки",
+    ],
+  },
+  {
+    id: "run",
+    nav: "Запуск",
+    title: "Запуск теста",
+    blurb: "Генератор нагрузки: профиль, движок, старт и мониторинг прогона",
+    available: false,
+    preview: [
+      "Выбор сценария и стенда",
+      "k6-operator или JMeter в Kubernetes",
+      "Профиль нагрузки и AutoStop",
+      "Статус прогона в реальном времени",
+    ],
+  },
+  {
+    id: "analysis",
+    nav: "Анализ",
+    title: "Анализ результатов",
+    blurb: "Метрики, сравнение с baseline, узкие места и рекомендации",
+    available: false,
+    preview: [
+      "RPS, latency (p95/p99), ошибки из Prometheus",
+      "Сравнение с эталоном release N−1",
+      "Связка readiness score сценария с фактом прогона",
+      "Рекомендации по узким местам",
+    ],
+  },
+  {
+    id: "report",
+    nav: "Отчёт",
+    title: "Отчёт",
+    blurb: "Итоговый документ для команды и заказчика",
+    available: false,
+    preview: [
+      "Executive summary и графики",
+      "Конфигурация сценария и стенда",
+      "Экспорт PDF / публикация в Confluence",
+      "Audit trail прогона",
+    ],
+  },
+];
+
+export function getModule(id: AppModuleId): AppModule {
+  return APP_MODULES.find((m) => m.id === id) ?? APP_MODULES[0];
+}

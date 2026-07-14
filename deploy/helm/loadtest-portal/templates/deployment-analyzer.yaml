@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "loadtest-portal.fullname" . }}-analyzer
+  labels:
+    {{- include "loadtest-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: analyzer
+spec:
+  replicas: {{ .Values.analyzer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "loadtest-portal.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: analyzer
+  template:
+    metadata:
+      labels:
+        {{- include "loadtest-portal.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: analyzer
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "loadtest-portal.serviceAccountName" . }}
+      containers:
+        - name: analyzer
+          image: {{ include "loadtest-portal.image" (dict "Values" .Values "repo" .Values.analyzer.image.repository "tag" .Values.analyzer.image.tag) }}
+          imagePullPolicy: {{ .Values.analyzer.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: {{ include "loadtest-portal.fullname" . }}-analyzer
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.analyzer.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000

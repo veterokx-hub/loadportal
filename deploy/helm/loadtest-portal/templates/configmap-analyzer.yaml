@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "loadtest-portal.fullname" . }}-analyzer
+  labels:
+    {{- include "loadtest-portal.labels" . | nindent 4 }}
+data:
+  ANALYZER_VERIFY_SSL: {{ .Values.analyzer.verifySsl | quote }}
+  ANALYZER_CA_BUNDLE: {{ .Values.analyzer.caBundle | quote }}
+  APP_PORT: "8000"

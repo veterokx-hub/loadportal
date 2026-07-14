@@ -1,0 +1,61 @@
+# Production-пример. Скопируйте и заполните под ваш кластер:
+#   cp values-production.example.yaml values-prod.yaml
+#   helm upgrade --install loadtest-portal ./deploy/helm/loadtest-portal -f values-prod.yaml -n loadtest --create-namespace
+
+global:
+  imageRegistry: registry.corp.example/loadtest
+  imagePullSecrets:
+    - name: corp-registry-pull
+
+ingress:
+  host: loadtest.corp.example
+  className: nginx
+  tls:
+    enabled: true
+    secretName: loadtest-wildcard-tls
+
+frontend:
+  replicaCount: 2
+  image:
+    tag: "0.1.0" # CI/CD pipeline tag
+
+constructor:
+  replicaCount: 2
+  image:
+    tag: "0.1.0"
+
+analyzer:
+  replicaCount: 2
+  verifySsl: "true"
+  caBundle: /etc/ssl/certs/ca-certificates.crt
+  image:
+    tag: "0.1.0"
+
+k6Generator:
+  replicaCount: 2
+  image:
+    tag: "0.1.0"
+
+jmeterBuilder:
+  replicaCount: 2
+  image:
+    tag: "0.1.0"
+
+# Рекомендуется managed PostgreSQL вместо pod в кластере
+postgresql:
+  internal:
+    enabled: false
+
+externalDatabase:
+  enabled: true
+  host: pg-loadtest.internal.corp
+  port: 5432
+  database: loadtest_portal
+  username: loadtest_app
+  existingSecret: loadtest-portal-db
+
+networkPolicy:
+  enabled: true
+
+serviceMonitor:
+  enabled: true

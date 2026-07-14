@@ -1,0 +1,35 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Demo API", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.demo.com/v1" }],
+  "paths": {
+    "/login": {
+      "post": {
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{userId}": {
+      "get": {
+        "operationId": "getUser",
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "verbose", "in": "query", "schema": { "type": "boolean" } },
+          { "name": "Authorization", "in": "header", "required": true, "schema": { "type": "string" } }
+        ]
+      }
+    }
+  }
+}
