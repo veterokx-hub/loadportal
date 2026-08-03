@@ -1,28 +1,60 @@
 server:
   port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
 
 spring:
   application:
     name: constructor
+  config:
+    import: optional:file:${LOADTEST_CONSUL_VAULT_CONFIG:/config/consul-vault-config.yaml}
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/loadtest}
     username: ${SPRING_DATASOURCE_USERNAME:loadtest}
     password: ${SPRING_DATASOURCE_PASSWORD:loadtest}
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
     open-in-view: false
+  liquibase:
+    enabled: true
+    change-log: classpath:db/changelog/db.changelog-master.yaml
   jackson:
     property-naming-strategy: SNAKE_CASE
     default-property-inclusion: non_null
     mapper:
       accept-case-insensitive-enums: true
 
-# Локальные defaults (docker-compose / k8s переопределяют через env).
-# При включённом Consul в UI URL берутся из KV/Catalog, если override пуст.
+# Метрики для VictoriaMetrics.
+# base-path=/ + path-mapping выводят экспозицию Prometheus ровно на /metrics
+# (вместо стандартного /actuator/prometheus). Наружу открыт только этот эндпоинт:
+# health/ready отдают собственные контроллеры, остальные actuator-эндпоинты закрыты.
+management:
+  endpoints:
+    web:
+      base-path: /
+      exposure:
+        include: prometheus
+      path-mapping:
+        prometheus: metrics
+  metrics:
+    tags:
+      # Общий тег на всех метриках — по нему метрики модулей различаются в VM.
+      application: ${spring.application.name}
+    distribution:
+      # Гистограммы нужны, чтобы считать перцентили на стороне VM/Grafana,
+      # а не хранить предрассчитанные значения от каждого инстанса.
+      percentiles-histogram:
+        http.server.requests: true
+        portal.build.duration: true
+
+# Defaults; в k8s перекрываются consul-vault-config.yaml и/или env.
 analyzer:
   base-url: ${ANALYZER_BASE_URL:http://localhost:8000}
 
@@ -31,3 +63,18 @@ k6-generator:
 
 jmeter-builder:
   base-url: ${JMETER_BUILDER_BASE_URL:http://localhost:8081}
+
+loadtest:
+  # Таймауты общего HTTP-клиента (см. config/HttpClientConfig).
+  http:
+    connect-timeout-ms: 5000
+    # Генерация большого .jmx может занимать десятки секунд.
+    read-timeout-ms: 60000
+    # Пробы соседей в /ready: быстрый отказ вместо ожидания.
+    probe-connect-timeout-ms: 2000
+    probe-read-timeout-ms: 2000
+  bootstrap:
+    admin-username: ${LOADTEST_BOOTSTRAP_ADMIN_USERNAME:admin}
+    admin-password: ${LOADTEST_BOOTSTRAP_ADMIN_PASSWORD:admin}
+  # Argo Job: --loadtest.db-init-exit=true --spring.main.web-application-type=none
+  db-init-exit: false

@@ -210,8 +210,7 @@ a:hover {
 }
 
 /* Кнопки панели инструментов */
-.btn-toolbar,
-.theme-toggle {
+.btn-toolbar {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -246,21 +245,18 @@ a:hover {
   white-space: nowrap;
 }
 
-.btn-toolbar:hover,
-.theme-toggle:hover {
+.btn-toolbar:hover {
   border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
   color: var(--accent);
   box-shadow: var(--nm-out-sm), 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
-.btn-toolbar:active,
-.theme-toggle:active {
+.btn-toolbar:active {
   transform: scale(0.98);
   box-shadow: var(--nm-in-sm);
 }
 
-.btn-toolbar:focus-visible,
-.theme-toggle:focus-visible {
+.btn-toolbar:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }
@@ -310,6 +306,7 @@ a:hover {
   letter-spacing: 0.01em;
   cursor: pointer;
   box-shadow: none;
+  text-decoration: none;
   transition: background var(--t), color var(--t), box-shadow var(--t);
 }
 
@@ -475,6 +472,73 @@ a:hover {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
+.run-status-queued {
+  color: var(--muted);
+}
+
+.run-status-running {
+  color: var(--accent);
+}
+
+.run-status-succeeded {
+  color: var(--ok);
+}
+
+.run-status-failed {
+  color: var(--danger);
+}
+
+.run-status-canceled {
+  color: var(--warn);
+}
+
+.run-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.run-timeline li {
+  display: grid;
+  grid-template-columns: 140px 100px 1fr;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--nm-in-sm);
+  font-size: 13px;
+  align-items: baseline;
+}
+
+.step4-actions {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.step4-actions-primary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+  align-items: center;
+}
+
+@media (max-width: 720px) {
+  .step4-actions-primary {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .run-timeline li {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 720px) {
   .module-tab {
     flex: none;
@@ -531,6 +595,7 @@ a:hover {
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: none;
+  text-decoration: none;
   cursor: pointer;
   flex: 1;
   min-width: 140px;
@@ -771,6 +836,29 @@ button.ghost:hover:not(:disabled) {
   box-shadow: var(--nm-out-sm), 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
+a.ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 11px 20px;
+  min-height: 42px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  box-shadow: var(--nm-out-sm);
+  text-decoration: none;
+}
+
+a.ghost:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
 button.small {
   padding: 6px 12px;
   min-height: 32px;
@@ -945,12 +1033,6 @@ select.method {
   display: flex;
   gap: 8px;
   align-items: center;
-}
-
-.grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
 }
 
 .pill-source {

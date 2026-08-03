@@ -4,8 +4,11 @@ import com.loadtest.constructor.security.AuthContext;
 import com.loadtest.constructor.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
+
+import java.nio.charset.StandardCharsets;
 
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
@@ -28,21 +31,20 @@ public class AuthInterceptor implements HandlerInterceptor {
         if (path.startsWith("/api/auth/login")) {
             return true;
         }
+        if (path.startsWith("/api/runs/webhook/")) {
+            return true;
+        }
         String token = extractToken(request);
         var ctx = authService.resolve(token);
         if (ctx.isEmpty()) {
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"Требуется авторизация\"}");
+            writeJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, "Требуется авторизация");
             return false;
         }
         request.setAttribute(ATTR_AUTH, ctx.get());
         if (ctx.get().mustChangePassword()
                 && !path.startsWith("/api/auth/change-password")
                 && !path.startsWith("/api/auth/logout")) {
-            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"Требуется сменить пароль\"}");
+            writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, "Требуется сменить пароль");
             return false;
         }
         return true;
@@ -70,5 +72,15 @@ public class AuthInterceptor implements HandlerInterceptor {
             return h.substring(7).trim();
         }
         return null;
+    }
+
+    /** Servlet по умолчанию пишет JSON в ISO-8859-1 — кириллица превращается в «???». */
+    private static void writeJsonError(HttpServletResponse response, int status, String message)
+            throws java.io.IOException {
+        response.setStatus(status);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        String escaped = message.replace("\\", "\\\\").replace("\"", "\\\"");
+        response.getWriter().write("{\"error\":\"" + escaped + "\"}");
     }
 }

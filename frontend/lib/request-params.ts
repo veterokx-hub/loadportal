@@ -1,9 +1,6 @@
 import type { Param, ParamLocation, RequestModel } from "./types";
 import { jmeterToParamSource } from "./render-jmeter";
 
-/** Типы параметров, добавляемые вручную на шаге «Корреляция». */
-export const PARAM_UI_LOCATIONS: ParamLocation[] = ["header", "query", "body"];
-
 export const PARAM_LOCATION_LABEL: Record<string, string> = {
   header: "Header",
   path: "Path",
@@ -31,7 +28,7 @@ function pathTemplateHas(req: RequestModel, name: string): boolean {
  * Добавляет недостающие; path без {name} в URL → query.
  * Header / query / body не трогает (кроме совпадения имени с path).
  */
-export function ensurePathParams(req: RequestModel): RequestModel {
+function ensurePathParams(req: RequestModel): RequestModel {
   const pathNames = bracesIn(req.path ?? "");
   const pathSet = new Set(pathNames);
   let params = [...req.params];
@@ -104,8 +101,4 @@ export function consolidateRequestParams(req: RequestModel): RequestModel {
   }
 
   return { ...withPath, headers: [], params: deduped };
-}
-
-export function uiParamIndex(req: RequestModel, p: Param): number {
-  return req.params.indexOf(p);
 }

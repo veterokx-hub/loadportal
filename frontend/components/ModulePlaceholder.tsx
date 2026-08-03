@@ -1,15 +1,15 @@
 "use client";
 
+import Link from "next/link";
 import type { AppModule, AppModuleId } from "@/lib/modules";
+import { scenarioPath } from "@/lib/routes";
 
 export function ModulePlaceholder({
   module,
   moduleIndex,
-  onBackToScenario,
 }: {
   module: AppModule;
   moduleIndex: number;
-  onBackToScenario: () => void;
 }) {
   return (
     <div className="panel module-placeholder">
@@ -56,14 +56,14 @@ export function ModulePlaceholder({
         </div>
 
         <p className="hint" style={{ marginTop: 16 }}>
-          Сейчас доступен только раздел «Сценарий». Остальные модули подключаются по
-          мере внедрения платформы — стенд, запуск, анализ и отчёт.
+          Сейчас доступны разделы «Сценарий» и «Запуск». Остальные модули подключаются по
+          мере внедрения платформы.
         </p>
 
         <div className="footer-nav" style={{ marginTop: 20 }}>
-          <button type="button" onClick={onBackToScenario}>
+          <Link href={scenarioPath("source")} className="ghost">
             ← К подготовке сценария
-          </button>
+          </Link>
         </div>
       </div>
     </div>

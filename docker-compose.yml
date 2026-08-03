@@ -19,12 +19,10 @@ services:
     build: ./analyzer
     environment:
       APP_PORT: "8000"
-      ANALYZER_VERIFY_SSL: "${ANALYZER_VERIFY_SSL:-false}"
-      ANALYZER_CA_BUNDLE: "${ANALYZER_CA_BUNDLE:-}"
     ports:
       - "8000:8000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -36,7 +34,7 @@ services:
     ports:
       - "8001:8001"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/health')\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/ready')\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -72,18 +70,61 @@ services:
       ANALYZER_BASE_URL: http://analyzer:8000
       K6_GENERATOR_BASE_URL: http://k6-generator:8001
       JMETER_BUILDER_BASE_URL: http://jmeter-builder:8081
+      LOADTEST_CONSUL_VAULT_CONFIG: /config/consul-vault-config.yaml
+      GITLAB_TRIGGER_TOKEN: ${GITLAB_TRIGGER_TOKEN:-}
+      GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-}
+    volumes:
+      - ./config/consul-vault-config.local.yaml:/config/consul-vault-config.yaml:ro
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
 
   frontend:
     build: ./frontend
     depends_on:
       - constructor
     environment:
-      CORE_API_BASE_URL: http://constructor:8080
       NEXT_PUBLIC_CORE_API_BASE_URL: http://localhost:8080
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Сборщик метрик портала. Не путать с Prometheus на стенде нагрузки:
+  # здесь метрики самой платформы (сборки, прогоны, логины), а не SUT.
+  victoria-metrics:
+    image: victoriametrics/victoria-metrics:v1.110.0
+    depends_on:
+      - constructor
+      - analyzer
+      - k6-generator
+      - jmeter-builder
+    command:
+      - "-storageDataPath=/victoria-metrics-data"
+      - "-promscrape.config=/etc/victoria/scrape.yml"
+      - "-retentionPeriod=30d"
+      - "-httpListenAddr=:8428"
+    volumes:
+      - ./config/victoria-metrics/scrape.yml:/etc/victoria/scrape.yml:ro
+      - vmdata:/victoria-metrics-data
+    ports:
+      - "8428:8428"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8428/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
 volumes:
   pgdata:
+  vmdata:

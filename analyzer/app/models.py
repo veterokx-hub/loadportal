@@ -1,7 +1,7 @@
 """Доменная модель сценария нагрузочного тестирования.
 
 Модель НЕ зависит от движка (JMeter/k6). Является эталонным контрактом,
-которым обмениваются analyzer, core-api и frontend.
+которым обмениваются analyzer, constructor и frontend.
 См. docs/domain-model.md.
 """
 from __future__ import annotations

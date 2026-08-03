@@ -1,6 +1,7 @@
 package com.loadtest.jmeterbuilder.web;
 
 import com.loadtest.jmeterbuilder.jmx.JmxBuilder;
+import com.loadtest.jmeterbuilder.metrics.BuilderMetrics;
 import com.loadtest.jmeterbuilder.model.Dataset;
 import com.loadtest.jmeterbuilder.model.Scenario;
 import org.springframework.http.HttpHeaders;
@@ -26,30 +27,44 @@ import java.util.zip.ZipOutputStream;
 public class GenerateController {
 
     private final JmxBuilder jmxBuilder;
+    private final BuilderMetrics metrics;
 
-    public GenerateController(JmxBuilder jmxBuilder) {
+    public GenerateController(JmxBuilder jmxBuilder, BuilderMetrics metrics) {
         this.jmxBuilder = jmxBuilder;
+        this.metrics = metrics;
     }
 
     @PostMapping("/jmeter")
     public ResponseEntity<byte[]> generate(@RequestBody Scenario scenario) {
-        String fileName = safeName(scenario.name());
-        String jmx = jmxBuilder.build(scenario);
         List<Dataset> datasets = scenario.datasets() == null ? List.of() : scenario.datasets();
+        // Формат известен до сборки: с датасетами отдаём zip, без них — одиночный .jmx.
+        String format = datasets.isEmpty() ? "jmx" : "zip";
+        int requestCount = scenario.requests() == null ? 0 : scenario.requests().size();
+        long startedAt = System.nanoTime();
 
-        if (datasets.isEmpty()) {
-            String outName = fileName + ".jmx";
+        try {
+            String fileName = safeName(scenario.name());
+            String jmx = jmxBuilder.build(scenario);
+
+            byte[] body = datasets.isEmpty()
+                    ? jmx.getBytes(StandardCharsets.UTF_8)
+                    : zip(fileName + ".jmx", jmx, datasets);
+            String outName = fileName + "." + format;
+
+            metrics.recordBuild(format, true, System.nanoTime() - startedAt, body.length, requestCount);
+
+            // Не application/xml: браузер сохранил бы артефакт как .xml вместо .jmx.
+            MediaType contentType = datasets.isEmpty()
+                    ? MediaType.APPLICATION_OCTET_STREAM
+                    : MediaType.parseMediaType("application/zip");
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + outName + "\"")
-                    .contentType(MediaType.APPLICATION_XML)
-                    .body(jmx.getBytes(StandardCharsets.UTF_8));
+                    .contentType(contentType)
+                    .body(body);
+        } catch (RuntimeException e) {
+            metrics.recordBuild(format, false, System.nanoTime() - startedAt, 0, requestCount);
+            throw e;
         }
-
-        String outName = fileName + ".zip";
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + outName + "\"")
-                .contentType(MediaType.parseMediaType("application/zip"))
-                .body(zip(fileName + ".jmx", jmx, datasets));
     }
 
     private byte[] zip(String jmxName, String jmx, List<Dataset> datasets) {

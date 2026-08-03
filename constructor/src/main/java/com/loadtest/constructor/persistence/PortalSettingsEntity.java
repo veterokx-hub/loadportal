@@ -34,42 +34,33 @@ public class PortalSettingsEntity {
     @Column(length = 512)
     private String ldapBindPassword = "";
 
-    // --- Consul / service discovery ---
-    // columnDefinition + default: Hibernate ddl-auto:update умеет добавить NOT NULL
-    // к таблице с уже существующими строками (иначе ALTER падает на PostgreSQL).
-    @Column(nullable = false, columnDefinition = "boolean not null default false")
-    private boolean consulEnabled = false;
+    // --- GitLab CI / Grafana ---
+    @Column(name = "gitlab_base_url", length = 512)
+    private String gitlabBaseUrl = "";
 
-    @Column(length = 255)
-    private String consulHost = "localhost";
+    @Column(name = "gitlab_project_id", length = 256)
+    private String gitlabProjectId = "";
 
-    @Column(nullable = false, columnDefinition = "integer not null default 8500")
-    private int consulPort = 8500;
+    @Column(name = "gitlab_trigger_ref", length = 256)
+    private String gitlabTriggerRef = "main";
 
-    @Column(length = 128)
-    private String consulDatacenter = "";
+    @Column(name = "gitlab_jmeter_variable", length = 128)
+    private String gitlabJmeterVariable = "LOADTEST_ENGINE=jmeter";
 
-    @Column(length = 128)
-    private String consulKvPrefix = "loadtest/";
+    @Column(name = "gitlab_k6_variable", length = 128)
+    private String gitlabK6Variable = "LOADTEST_ENGINE=k6";
 
-    @Column(length = 128)
-    private String consulServiceAnalyzer = "loadtest-analyzer";
+    @Column(name = "gitlab_trigger_token_vault_path", length = 512)
+    private String gitlabTriggerTokenVaultPath = "loadtest/gitlab/trigger-token";
 
-    @Column(name = "consul_service_k6", length = 128)
-    private String consulServiceK6 = "loadtest-k6-generator";
+    @Column(name = "gitlab_webhook_secret_vault_path", length = 512)
+    private String gitlabWebhookSecretVaultPath = "loadtest/gitlab/webhook-secret";
 
-    @Column(length = 128)
-    private String consulServiceJmeter = "loadtest-jmeter-builder";
+    @Column(name = "grafana_base_url", length = 512)
+    private String grafanaBaseUrl = "";
 
-    /** Пустые = брать из Consul (если вкл.) или localhost-defaults из env. */
-    @Column(length = 512)
-    private String analyzerUrl = "";
-
-    @Column(name = "k6_generator_url", length = 512)
-    private String k6GeneratorUrl = "";
-
-    @Column(length = 512)
-    private String jmeterBuilderUrl = "";
+    @Column(name = "grafana_dashboard_template", length = 2048)
+    private String grafanaDashboardTemplate = "";
 
     protected PortalSettingsEntity() {
     }
@@ -146,91 +137,75 @@ public class PortalSettingsEntity {
         this.ldapBindPassword = ldapBindPassword;
     }
 
-    public boolean isConsulEnabled() {
-        return consulEnabled;
+    public String getGitlabBaseUrl() {
+        return gitlabBaseUrl;
     }
 
-    public void setConsulEnabled(boolean consulEnabled) {
-        this.consulEnabled = consulEnabled;
+    public void setGitlabBaseUrl(String gitlabBaseUrl) {
+        this.gitlabBaseUrl = gitlabBaseUrl;
     }
 
-    public String getConsulHost() {
-        return consulHost;
+    public String getGitlabProjectId() {
+        return gitlabProjectId;
     }
 
-    public void setConsulHost(String consulHost) {
-        this.consulHost = consulHost;
+    public void setGitlabProjectId(String gitlabProjectId) {
+        this.gitlabProjectId = gitlabProjectId;
     }
 
-    public int getConsulPort() {
-        return consulPort;
+    public String getGitlabTriggerRef() {
+        return gitlabTriggerRef;
     }
 
-    public void setConsulPort(int consulPort) {
-        this.consulPort = consulPort;
+    public void setGitlabTriggerRef(String gitlabTriggerRef) {
+        this.gitlabTriggerRef = gitlabTriggerRef;
     }
 
-    public String getConsulDatacenter() {
-        return consulDatacenter;
+    public String getGitlabJmeterVariable() {
+        return gitlabJmeterVariable;
     }
 
-    public void setConsulDatacenter(String consulDatacenter) {
-        this.consulDatacenter = consulDatacenter;
+    public void setGitlabJmeterVariable(String gitlabJmeterVariable) {
+        this.gitlabJmeterVariable = gitlabJmeterVariable;
     }
 
-    public String getConsulKvPrefix() {
-        return consulKvPrefix;
+    public String getGitlabK6Variable() {
+        return gitlabK6Variable;
     }
 
-    public void setConsulKvPrefix(String consulKvPrefix) {
-        this.consulKvPrefix = consulKvPrefix;
+    public void setGitlabK6Variable(String gitlabK6Variable) {
+        this.gitlabK6Variable = gitlabK6Variable;
     }
 
-    public String getConsulServiceAnalyzer() {
-        return consulServiceAnalyzer;
+    public String getGitlabTriggerTokenVaultPath() {
+        return gitlabTriggerTokenVaultPath;
     }
 
-    public void setConsulServiceAnalyzer(String consulServiceAnalyzer) {
-        this.consulServiceAnalyzer = consulServiceAnalyzer;
+    public void setGitlabTriggerTokenVaultPath(String gitlabTriggerTokenVaultPath) {
+        this.gitlabTriggerTokenVaultPath = gitlabTriggerTokenVaultPath;
     }
 
-    public String getConsulServiceK6() {
-        return consulServiceK6;
+    public String getGitlabWebhookSecretVaultPath() {
+        return gitlabWebhookSecretVaultPath;
     }
 
-    public void setConsulServiceK6(String consulServiceK6) {
-        this.consulServiceK6 = consulServiceK6;
+    public void setGitlabWebhookSecretVaultPath(String gitlabWebhookSecretVaultPath) {
+        this.gitlabWebhookSecretVaultPath = gitlabWebhookSecretVaultPath;
     }
 
-    public String getConsulServiceJmeter() {
-        return consulServiceJmeter;
+    public String getGrafanaBaseUrl() {
+        return grafanaBaseUrl;
     }
 
-    public void setConsulServiceJmeter(String consulServiceJmeter) {
-        this.consulServiceJmeter = consulServiceJmeter;
+    public void setGrafanaBaseUrl(String grafanaBaseUrl) {
+        this.grafanaBaseUrl = grafanaBaseUrl;
     }
 
-    public String getAnalyzerUrl() {
-        return analyzerUrl;
+    public String getGrafanaDashboardTemplate() {
+        return grafanaDashboardTemplate;
     }
 
-    public void setAnalyzerUrl(String analyzerUrl) {
-        this.analyzerUrl = analyzerUrl;
-    }
-
-    public String getK6GeneratorUrl() {
-        return k6GeneratorUrl;
-    }
-
-    public void setK6GeneratorUrl(String k6GeneratorUrl) {
-        this.k6GeneratorUrl = k6GeneratorUrl;
-    }
-
-    public String getJmeterBuilderUrl() {
-        return jmeterBuilderUrl;
-    }
-
-    public void setJmeterBuilderUrl(String jmeterBuilderUrl) {
-        this.jmeterBuilderUrl = jmeterBuilderUrl;
+    public void setGrafanaDashboardTemplate(String grafanaDashboardTemplate) {
+        this.grafanaDashboardTemplate = grafanaDashboardTemplate;
     }
 }

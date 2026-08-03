@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { Intensity, RequestModel, Scenario, TestMode } from "@/lib/types";
-import { buildJmx, buildK6, downloadBlob } from "@/lib/api";
+import { downloadBlob, downloadScript, saveBuild } from "@/lib/api";
 import { groupRequests, groupTitle, groupIntensity } from "@/lib/grouping";
 import { groupProfile } from "@/lib/profile";
 import { LoadChart, CHART_COLORS, type Series } from "@/components/LoadChart";
@@ -15,16 +15,20 @@ export function Step4Intensity({
   updateRequest,
   onRestoreScenario,
   onBack,
+  onGoToRun,
 }: {
   scenario: Scenario;
   setScenario: (s: Scenario) => void;
   updateRequest: (id: string, patch: Partial<RequestModel>) => void;
   onRestoreScenario: (s: Scenario) => void;
   onBack: () => void;
+  onGoToRun?: (buildId: string) => void;
 }) {
   const [building, setBuilding] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [savedHint, setSavedHint] = useState<string | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
   const [sharedRamp, setSharedRamp] = useState(false);
   const [sharedHold, setSharedHold] = useState(false);
@@ -87,9 +91,10 @@ export function Step4Intensity({
     setBuilding(true);
     setError(null);
     setDone(null);
+    setSavedHint(null);
     try {
-      const { blob, filename } =
-        engine === "k6" ? await buildK6(scenario) : await buildJmx(scenario);
+      const saved = await saveBuild(scenario, engine);
+      const { blob, filename } = await downloadScript(saved.script_id);
       downloadBlob(blob, filename);
       setDone(filename);
       setHistoryKey((k) => k + 1);
@@ -97,6 +102,37 @@ export function Step4Intensity({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBuilding(false);
+    }
+  }
+
+  async function saveOnly() {
+    setSaving(true);
+    setError(null);
+    setSavedHint(null);
+    try {
+      const saved = await saveBuild(scenario, engine);
+      setSavedHint(
+        `Сборка сохранена · build_id=${saved.build_id.slice(0, 8)}… · script_id=${saved.script_id.slice(0, 8)}…`
+      );
+      setHistoryKey((k) => k + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function goToRun() {
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await saveBuild(scenario, engine);
+      setHistoryKey((k) => k + 1);
+      onGoToRun?.(saved.build_id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -452,6 +488,12 @@ export function Step4Intensity({
         </div>
       )}
 
+      {savedHint && (
+        <div className="hint" style={{ marginTop: 12 }}>
+          {savedHint}
+        </div>
+      )}
+
       <h3 style={{ fontSize: 13, marginTop: 18 }}>Движок и сборка</h3>
 
       <BuildHistory refreshKey={historyKey} onRestore={onRestoreScenario} />
@@ -483,22 +525,39 @@ export function Step4Intensity({
         </div>
       )}
 
-      <div className="footer-nav">
+      <div className="footer-nav step4-actions">
         <button className="ghost" onClick={onBack}>
           ← Назад
         </button>
-        <button
-          className="success"
-          onClick={build}
-          disabled={building || groups.length === 0 || readiness.blockers > 0}
-          title={
-            readiness.blockers > 0
-              ? `Исправьте ${readiness.blockers} блокер(ов) в «Пульсе сценария»`
-              : undefined
-          }
-        >
-          {building ? "Собираем..." : `Собрать ${engine === "k6" ? "k6" : "JMeter"} и скачать`}
-        </button>
+        <div className="step4-actions-primary">
+          <button
+            className="ghost"
+            onClick={build}
+            disabled={building || saving || groups.length === 0 || readiness.blockers > 0}
+            title="Сохранить сборку и скачать сохранённый артефакт"
+          >
+            {building ? "Собираем…" : "Выгрузить скрипт"}
+          </button>
+          <button
+            className="ghost"
+            onClick={saveOnly}
+            disabled={building || saving || groups.length === 0 || readiness.blockers > 0}
+          >
+            {saving ? "…" : "Сохранить сборку"}
+          </button>
+          <button
+            className="success"
+            onClick={goToRun}
+            disabled={building || saving || groups.length === 0 || readiness.blockers > 0 || !onGoToRun}
+            title={
+              readiness.blockers > 0
+                ? `Исправьте ${readiness.blockers} блокер(ов) в «Пульсе сценария»`
+                : "Сохранить сборку и перейти к запуску"
+            }
+          >
+            {saving ? "Готовим…" : "К запуску теста →"}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -1,33 +1,4 @@
-import type { Generator, ParamSource } from "./types";
-
-/** Преобразует ParamSource в JMeter-выражение (${var}, ${__UUID()} и т.д.). */
-export function paramSourceToJmeter(source: ParamSource): string {
-  switch (source.kind) {
-    case "constant":
-      return source.value;
-    case "correlation":
-      return `\${${source.variable}}`;
-    case "csv":
-      return `\${${source.column}}`;
-    case "generator":
-      return generatorToJmeter(source.generator);
-  }
-}
-
-function generatorToJmeter(g: Generator): string {
-  switch (g.type) {
-    case "uuid":
-      return "${__UUID()}";
-    case "randomInt":
-      return `\${__Random(${g.min ?? 0},${g.max ?? 1000000})}`;
-    case "randomString":
-      return `\${__RandomString(${g.length ?? 8},${g.chars ?? "abcdefghijklmnopqrstuvwxyz0123456789"})}`;
-    case "counter":
-      return "${__counter(FALSE)}";
-    case "timestamp":
-      return g.format ? `\${__time(${g.format})}` : "${__time()}";
-  }
-}
+import type { ParamSource } from "./types";
 
 /** Угадывает ParamSource из сохранённого JMeter-значения заголовка. */
 export function jmeterToParamSource(value: string): ParamSource {

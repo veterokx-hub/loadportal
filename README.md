@@ -1,46 +1,91 @@
 # Load Test Portal (НТ · Портал)
 
-Портал для подготовки сценариев нагрузочного тестирования. На входе — Swagger/OpenAPI или Postman-коллекция; на выходе — готовый **JMeter `.jmx`** или **k6 `.js`** с параметрами, корреляцией и профилем нагрузки.
+Портал для подготовки сценариев НТ: Swagger/OpenAPI или Postman → **JMeter `.jmx`** / **k6 `.js`**.
+
+Окружение: **один прод-экземпляр** в тестовом k8s-кластере. Манифесты k8s / Argo — **вне репозитория** (формируете самостоятельно). Здесь — исходники сервисов + эталон `config/consul-vault-config.yaml`.
 
 ## Архитектура
 
-| Сервис | Порт | Технология | Назначение |
+| Сервис | Порт | Probes | Назначение |
 |---|---:|---|---|
-| `frontend` | 3000 | Next.js + TypeScript | Мастер, история, настройки |
-| `constructor` | 8080 | Java Spring Boot | Auth, пользователи, LDAP, orchestration, история |
-| `jmeter-builder` | 8081 | Java Spring Boot | `Scenario` → JMeter `.jmx` / zip |
-| `analyzer` | 8000 | Python FastAPI | OpenAPI/Postman → `Scenario` |
-| `k6-generator` | 8001 | Python FastAPI | `Scenario` → k6-скрипт |
-| `postgres` | 5432 | PostgreSQL 16 | Users, sessions, settings, builds |
+| `frontend` | 3000 | `/` | UI |
+| `constructor` | 8080 | `/health`, `/ready` | Auth, LDAP, orchestration, история |
+| `jmeter-builder` | 8081 | `/health`, `/ready` | Scenario → JMX |
+| `analyzer` | 8000 | `/health`, `/ready` | OpenAPI/Postman → Scenario |
+| `k6-generator` | 8001 | `/health`, `/ready` | Scenario → k6 |
+| `postgres` | 5432 | `pg_isready` | Данные |
 
 ```
-                    ┌─────────────┐
-  Swagger/Postman ─►│  analyzer   │──┐
-                    └─────────────┘  │
-                                       ▼
-┌──────────┐                ┌──────────────┐     ┌──────────────┐
-│ frontend │◄──────────────►│ constructor  │────►│ k6-generator │
-└──────────┘   Bearer        └──────┬───────┘     └──────────────┘
-                                    │
-                                    ├──────────► jmeter-builder
-                                    ▼
-                               PostgreSQL
+Browser ──► Ingress
+              /      → frontend
+              /api    → constructor
+                          ├─► jmeter-builder
+                          ├─► analyzer
+                          ├─► k6-generator
+                          └─► PostgreSQL
 ```
 
-URL модулей по умолчанию — localhost/env. В **Настройки → Инфраструктура** можно включить **Consul** (KV/Catalog) или задать явные override.
+Адреса модулей, Consul и Vault — в **`config/consul-vault-config.yaml`** (ConfigMap).  
+Секреты (БД, bootstrap-admin, LDAP bind) — **только Vault**.
 
-Общий контракт данных: [`docs/domain-model.md`](docs/domain-model.md).
+## Критично: frontend + пустой API base (same-origin)
 
-### Поток работы
+`NEXT_PUBLIC_CORE_API_BASE_URL` вшивается в JS **на этапе `npm run build`**, не в runtime.
 
-1. **Источник** — загрузка OpenAPI URL или Postman JSON → `analyzer` → черновик сценария.
-2. **Запросы** — правка методов, URL, тел, группировка.
-3. **Корреляция и параметры** — заголовки, query, body, extractors.
-4. **Интенсивность и сборка** — профиль RPS, AutoStop, Prometheus (JMeter), сборка `.jmx` или k6.
+| Сборка | Значение | Поведение браузера |
+|---|---|---|
+| Локально (compose) | `http://localhost:8080` | Прямой вызов constructor |
+| **k8s / Ingress** | **пустая строка `""`** | Запросы на `/api/...` того же host (Ingress проксирует на constructor) |
 
-Каждая успешная сборка сохраняется в **истории пользователя** (привязка к учётной записи).
+Если собрать frontend с `localhost:8080` и выкатить в k8s — UI «жив», а API «молчит» (браузер бьёт в localhost пользователя).  
+Поэтому для Argo/prod: **пересобирать образ frontend с пустым `NEXT_PUBLIC_CORE_API_BASE_URL`**.
 
-## Запуск
+В `consul-vault-config.yaml` поле `modules.frontend-api-base-url: ""` отражает тот же принцип (same-origin).
+
+## Bootstrap admin
+
+При **первом** старте `constructor`, если пользователя `admin` ещё нет в БД, создаётся учётка:
+
+- логин из `LOADTEST_BOOTSTRAP_ADMIN_USERNAME` (по умолчанию `admin`)
+- пароль из `LOADTEST_BOOTSTRAP_ADMIN_PASSWORD` (по умолчанию `admin`)
+- флаг **обязательной смены пароля** при первом входе
+
+Пароль в проде берётся из **Vault** (Secret → env), не из ConfigMap и не из git.  
+Повторный старт **не** перезаписывает уже существующего admin.
+
+## Liquibase + init-job БД
+
+Схема БД — **Liquibase** (`constructor/src/main/resources/db/changelog/`).  
+Hibernate: `ddl-auto: validate`.
+
+**Argo Job (init DB)** — тот же образ `constructor`, без веб-сервера:
+
+```bash
+java -jar app.jar \
+  --spring.main.web-application-type=none \
+  --loadtest.db-init-exit=true
+```
+
+Job должен завершиться успешно до старта Deployment constructor (sync wave / PreSync hook в Argo).
+
+## Probes (для ваших манифестов)
+
+| Компонент | liveness | readiness |
+|---|---|---|
+| frontend | `GET /` | `GET /` |
+| constructor | `GET /health` | `GET /ready` (или `/ready/strict`) |
+| jmeter-builder | `GET /health` | `GET /ready` |
+| analyzer | `GET /health` | `GET /ready` |
+| k6-generator | `GET /health` | `GET /ready` |
+| postgres | `pg_isready` | `pg_isready` |
+
+SSL/CA в модулях **не используются** (analyzer ходит за Swagger без verify).
+
+## Обновление версий
+
+Через **Argo CD** (image tag / Application sync). В репозитории нет Helm/overlays — только исходники и `config/`.
+
+## Локальный запуск
 
 ```bash
 docker compose up --build
@@ -50,54 +95,28 @@ docker compose up --build
 |---|---|
 | http://localhost:3000 | Портал |
 | http://localhost:8080 | constructor |
-| http://localhost:8081/health | jmeter-builder |
-| http://localhost:8000/docs | Swagger analyzer |
-| http://localhost:8001/docs | Swagger k6-generator |
+| http://localhost:8081/ready | jmeter-builder |
+| http://localhost:8000/docs | analyzer |
+| http://localhost:8001/docs | k6-generator |
 
-### Учётные данные по умолчанию
+Локальный конфиг: `config/consul-vault-config.local.yaml` (монтируется в constructor).  
+Эталон для k8s ConfigMap: `config/consul-vault-config.yaml`.
 
-При первом старте `constructor` создаёт администратора:
-
-- **Логин:** `admin`
-- **Пароль:** `admin` (при первом входе **обязательная смена пароля**)
-
-Смените пароль или создайте отдельных пользователей в **Настройки → Пользователи** (доступно только администратору).
-
-## Аутентификация
-
-- Вход через `POST /api/auth/login` → Bearer-токен (сессия 24 ч).
-- Все API-запросы (кроме login) требуют заголовок `Authorization: Bearer <token>`.
-- История сборок изолирована по пользователю: каждый видит только **последние 20** своих сборок.
-
-### LDAP / Active Directory
-
-В **Настройки → LDAP / AD** (admin) задаются параметры корпоративного каталога.
-
-**Вход по доменной учётке AD** (логин = sAMAccountName, пароль AD). Синхронизация групп AD **не используется** — роли ADMIN/USER задаются в портале. При первом входе через LDAP пользователь создаётся автоматически с ролью USER.
-
-| Поле | Назначение |
-|---|---|
-| Включить LDAP | Попытка входа через AD при неудаче локального пароля |
-| URL | `ldap://dc.corp.local:389` или `ldaps://...` |
-| Base DN | Корень поиска, напр. `dc=corp,dc=local` |
-| User DN pattern | Шаблон bind, напр. `uid={0},ou=people,...` |
-| User search base | База для search-режима |
-| User search filter | Фильтр, напр. `(sAMAccountName={0})` |
-| Bind DN / password | Сервисная учётка для search (если нужна) |
-
-Пользователи с флагом **«только LDAP»** не могут войти локальным паролем.
+Первый вход: `admin` / `admin` → смена пароля.
 
 ## Структура репозитория
 
 ```
 loadtest-portal/
-├── frontend/          # UI мастера
-├── constructor/       # Java: auth, orchestration, persistence
-├── jmeter-builder/    # Java: генерация JMX
-├── analyzer/          # Python: OpenAPI + Postman parsers
-├── k6-generator/      # Python: генерация k6-скриптов
-├── deploy/            # Helm + DevOps handoff
-├── docs/              # Документация
+├── frontend/
+├── constructor/       # Liquibase changelog, discovery config
+├── jmeter-builder/
+├── analyzer/
+├── k6-generator/
+├── config/
+│   ├── consul-vault-config.yaml        # эталон ConfigMap (k8s)
+│   └── consul-vault-config.local.yaml  # docker compose
+├── docs/
 └── docker-compose.yml
 ```
 
@@ -106,61 +125,23 @@ loadtest-portal/
 | Метод | Путь | Описание |
 |---|---|---|
 | POST | `/api/auth/login` | Вход |
-| POST | `/api/auth/logout` | Выход |
 | POST | `/api/analyze` | Анализ источника |
-| POST | `/api/build` | Сборка JMeter `.jmx` |
-| POST | `/api/build/k6` | Сборка k6 |
-| GET | `/api/builds` | История сборок текущего пользователя (последние **20**) |
-| GET | `/api/builds/{id}/scenario` | Восстановить сценарий из истории |
-| GET/POST/DELETE | `/api/users` | Управление пользователями (admin) |
-| GET/PUT | `/api/settings/ldap` | Настройки LDAP (admin) |
+| POST | `/api/build` | Разовая сборка JMeter (файл, без записи в историю) |
+| POST | `/api/build/k6` | Разовая сборка k6 (файл, без записи в историю) |
+| POST | `/api/builds/save` | Сборка + сохранение → `build_id` + `script_id` |
+| GET | `/api/builds` | История (последние 20) |
+| GET/POST | `/api/scripts` | Скрипты пользователя / upload |
+| GET | `/api/scripts/{id}/download` | Скачать сохранённый артефакт |
+| GET/PUT | `/api/settings/ldap` | LDAP (admin) |
+| GET/PUT | `/api/settings/gitlab` | GitLab CI + Grafana (admin) |
+| POST | `/api/settings/gitlab/test` | Проверка GitLab |
+| POST/GET | `/api/runs` | Прогоны нагрузки |
+| GET | `/api/runs/{id}` | Карточка прогона |
+| POST | `/api/runs/webhook/gitlab` | Webhook GitLab (без Bearer) |
+| GET | `/metrics` | Метрики модуля (Prometheus / VictoriaMetrics) |
 
-## JMeter: интенсивность и плагины
+Модуль «Запуск»: [`docs/module-3-run.md`](docs/module-3-run.md).  
+Идентификаторы (`build_id` / `script_id` / `test_id` / `run_id`): [`docs/data-model-ids.md`](docs/data-model-ids.md).  
+Метрики: [`docs/metrics.md`](docs/metrics.md) · VictoriaMetrics UI: http://localhost:8428
 
-- **`constant_throughput`** — стандартный JMeter 5.6.3, без плагинов.
-- **`shaping`** (точный RPS с рампой) — плагин **jpgc-casutg** (Custom Thread Groups + Throughput Shaping Timer).  
-  Установка: JMeter → Plugins Manager → «Custom Thread Groups».
-
-### Prometheus (только JMeter)
-
-В каждый `.jmx` по умолчанию добавляется Backend Listener `com.github.kolesnikovm.PrometheusListener`.  
-Порт exporter задаётся в шаге 4 (по умолчанию `9001`). Хост — на стороне запуска JMeter.
-
-k6 использует встроенные `thresholds`, `check()` и `ramping-arrival-rate`; отдельный Prometheus listener не генерируется.
-
-## Разработка локально
-
-```bash
-docker compose up --build
-```
-
-Переменные окружения analyzer: `ANALYZER_VERIFY_SSL`, `ANALYZER_CA_BUNDLE` (см. `docker-compose.yml`).
-
-## Развёртывание в Kubernetes
-
-Helm-чарт и документация для корпоративного k8s:
-
-| Ресурс | Путь |
-|---|---|
-| Helm chart | [`deploy/helm/loadtest-portal/`](deploy/helm/loadtest-portal/) |
-| Инструкция DevOps | [`docs/deploy/k8s.md`](docs/deploy/k8s.md) |
-| Дорожная карта платформы (модули 1–5) | [`docs/platform-roadmap.md`](docs/platform-roadmap.md) |
-| Архитектура целевой платформы | [`docs/architecture-overview.md`](docs/architecture-overview.md) |
-| План модуля 2 (SUT + stubs) + чеклист вопросов | [`docs/module-2-plan.md`](docs/module-2-plan.md) |
-| Сборка образов для registry | [`deploy/ci/build-and-push.sh`](deploy/ci/build-and-push.sh) |
-| Handoff для DevOps (corp k8s) | [`deploy/HANDOFF-DEVOPS.md`](deploy/HANDOFF-DEVOPS.md) |
-
-```bash
-# production: same-origin API через Ingress
-REGISTRY=registry.corp.example/loadtest TAG=0.1.0 \
-NEXT_PUBLIC_CORE_API_BASE_URL="" \
-./deploy/ci/build-and-push.sh
-
-helm upgrade --install loadtest-portal ./deploy/helm/loadtest-portal \
-  -f deploy/helm/loadtest-portal/values-production.example.yaml \
-  -n loadtest --create-namespace
-```
-
-## Статус
-
-Рабочий MVP: JMeter и k6, per-user история сборок, локальные пользователи + подготовка LDAP AD.
+Общий контракт: [`docs/domain-model.md`](docs/domain-model.md).

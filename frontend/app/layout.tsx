@@ -3,7 +3,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "НТ · Портал нагрузочного тестирования",
-  description: "Подготовка сценариев нагрузочного тестирования для JMeter и k6",
+  description: "Подготовка сценариев и запуск нагрузочного тестирования (JMeter / k6)",
+  icons: {
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
+    shortcut: "/favicon.svg",
+  },
 };
 
 const themeInit = `(function(){try{var t=localStorage.getItem('ltp-theme')||'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`;

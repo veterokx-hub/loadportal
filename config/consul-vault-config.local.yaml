@@ -1,0 +1,32 @@
+# Локальный docker-compose: URL на service names сети compose.
+# В k8s этот файл = содержимое ConfigMap; адреса — k8s Service DNS / Consul.
+# Секреты (пароли) — только Vault, не в этом файле.
+
+loadtest:
+  discovery:
+    consul:
+      enabled: false
+      host: localhost
+      port: 8500
+      datacenter: ""
+      kv-prefix: loadtest/
+      service-frontend: loadtest-frontend
+      service-constructor: loadtest-constructor
+      service-analyzer: loadtest-analyzer
+      service-k6: loadtest-k6-generator
+      service-jmeter: loadtest-jmeter-builder
+      service-postgres: loadtest-postgres
+
+    vault:
+      enabled: false
+      address: ""
+      kv-path: secret/data/loadtest/portal
+
+    modules:
+      # Локально браузер ходит на host-порт constructor
+      frontend-api-base-url: http://localhost:8080
+      constructor-url: http://constructor:8080
+      analyzer-url: http://analyzer:8000
+      k6-generator-url: http://k6-generator:8001
+      jmeter-builder-url: http://jmeter-builder:8081
+      postgres-jdbc-url: jdbc:postgresql://postgres:5432/loadtest

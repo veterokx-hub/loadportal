@@ -17,6 +17,9 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# Без HOSTNAME standalone-сервер слушает только IPv6 — healthcheck/probe по 127.0.0.1 падает.
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
 COPY --from=build /app/public ./public
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static

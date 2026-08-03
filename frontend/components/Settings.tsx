@@ -1,17 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { InfrastructureSettings, LdapSettings, PortalUser } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import type { LdapSettings, PortalUser, GitLabSettings } from "@/lib/api";
 import {
   createUser,
   deleteUser,
-  getInfrastructureSettings,
   getLdapSettings,
+  getGitLabSettings,
   listUsers,
-  saveInfrastructureSettings,
   saveLdapSettings,
+  saveGitLabSettings,
+  testGitLabConnection,
 } from "@/lib/api";
 import type { UserRole } from "@/lib/auth";
+
+type SettingsTab = "users" | "ldap" | "gitlab";
 
 const EMPTY_LDAP: LdapSettings = {
   ldap_enabled: false,
@@ -24,55 +27,118 @@ const EMPTY_LDAP: LdapSettings = {
   ldap_bind_password: "",
 };
 
-const EMPTY_INFRA: InfrastructureSettings = {
-  consul_enabled: false,
-  consul_host: "localhost",
-  consul_port: 8500,
-  consul_datacenter: "",
-  consul_kv_prefix: "loadtest/",
-  consul_service_analyzer: "loadtest-analyzer",
-  consul_service_k6: "loadtest-k6-generator",
-  consul_service_jmeter: "loadtest-jmeter-builder",
-  analyzer_url: "",
-  k6_generator_url: "",
-  jmeter_builder_url: "",
-  resolved_analyzer_url: "http://localhost:8000",
-  resolved_k6_generator_url: "http://localhost:8001",
-  resolved_jmeter_builder_url: "http://localhost:8081",
-  consul_reachable: false,
+const EMPTY_GITLAB: GitLabSettings = {
+  gitlab_base_url: "https://gitlab.corp.local",
+  gitlab_project_id: "",
+  gitlab_trigger_ref: "main",
+  gitlab_jmeter_variable: "LOADTEST_ENGINE=jmeter",
+  gitlab_k6_variable: "LOADTEST_ENGINE=k6",
+  gitlab_trigger_token_vault_path: "loadtest/gitlab/trigger-token",
+  gitlab_webhook_secret_vault_path: "loadtest/gitlab/webhook-secret",
+  grafana_base_url: "",
+  grafana_dashboard_template: "/d/loadtest?var-run_id={run_id}&from={from}&to={to}",
 };
 
 export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [tab, setTab] = useState<"users" | "ldap" | "infra">("users");
+  const [tab, setTab] = useState<SettingsTab>("users");
   const [users, setUsers] = useState<PortalUser[]>([]);
   const [ldap, setLdap] = useState<LdapSettings>(EMPTY_LDAP);
-  const [infra, setInfra] = useState<InfrastructureSettings>(EMPTY_INFRA);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [savedHint, setSavedHint] = useState<string | null>(null);
+  const [gitlab, setGitlab] = useState<GitLabSettings>(EMPTY_GITLAB);
+  const [tabError, setTabError] = useState<{ tab: SettingsTab; message: string } | null>(null);
+  const [tabHint, setTabHint] = useState<{ tab: SettingsTab; message: string } | null>(null);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingLdap, setLoadingLdap] = useState(false);
+  const [loadingGitlab, setLoadingGitlab] = useState(false);
+  const [testingGitlab, setTestingGitlab] = useState(false);
+  const [usersLoaded, setUsersLoaded] = useState(false);
+  const [ldapLoaded, setLdapLoaded] = useState(false);
+  const [gitlabLoaded, setGitlabLoaded] = useState(false);
 
   const [newUser, setNewUser] = useState("");
   const [newPass, setNewPass] = useState("");
   const [newRole, setNewRole] = useState<UserRole>("USER");
   const [newLdapOnly, setNewLdapOnly] = useState(false);
 
+  const switchTab = (next: SettingsTab) => {
+    setTab(next);
+    setTabError(null);
+    setTabHint(null);
+  };
+
+  const loadUsers = useCallback(async () => {
+    setLoadingUsers(true);
+    setTabError(null);
+    try {
+      setUsers(await listUsers());
+      setUsersLoaded(true);
+    } catch (e) {
+      setTabError({
+        tab: "users",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setLoadingUsers(false);
+    }
+  }, []);
+
+  const loadLdap = useCallback(async () => {
+    setLoadingLdap(true);
+    setTabError(null);
+    try {
+      const l = await getLdapSettings();
+      setLdap({ ...EMPTY_LDAP, ...l, ldap_bind_password: "" });
+      setLdapLoaded(true);
+    } catch (e) {
+      setTabError({
+        tab: "ldap",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setLoadingLdap(false);
+    }
+  }, []);
+
+  const loadGitlab = useCallback(async () => {
+    setLoadingGitlab(true);
+    setTabError(null);
+    try {
+      const g = await getGitLabSettings();
+      setGitlab({ ...EMPTY_GITLAB, ...g });
+      setGitlabLoaded(true);
+    } catch (e) {
+      setTabError({
+        tab: "gitlab",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setLoadingGitlab(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!open) return;
-    setError(null);
-    setSavedHint(null);
-    setLoading(true);
-    Promise.all([listUsers(), getLdapSettings(), getInfrastructureSettings()])
-      .then(([u, l, i]) => {
-        setUsers(u);
-        setLdap({ ...EMPTY_LDAP, ...l, ldap_bind_password: "" });
-        setInfra({ ...EMPTY_INFRA, ...i });
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false));
-  }, [open]);
+    setTabError(null);
+    setTabHint(null);
+    setTab("users");
+    setUsersLoaded(false);
+    setLdapLoaded(false);
+    setGitlabLoaded(false);
+    loadUsers();
+  }, [open, loadUsers]);
+
+  useEffect(() => {
+    if (!open || tab !== "ldap" || ldapLoaded) return;
+    loadLdap();
+  }, [open, tab, ldapLoaded, loadLdap]);
+
+  useEffect(() => {
+    if (!open || tab !== "gitlab" || gitlabLoaded) return;
+    loadGitlab();
+  }, [open, tab, gitlabLoaded, loadGitlab]);
 
   async function addUser() {
-    setError(null);
+    setTabError(null);
+    setTabHint(null);
     try {
       await createUser({
         username: newUser.trim(),
@@ -83,52 +149,93 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
       setUsers(await listUsers());
       setNewUser("");
       setNewPass("");
+      setTabHint({ tab: "users", message: "Пользователь создан" });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setTabError({
+        tab: "users",
+        message: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
   async function removeUser(username: string) {
-    setError(null);
+    setTabError(null);
+    setTabHint(null);
     try {
       await deleteUser(username);
       setUsers(await listUsers());
+      setTabHint({ tab: "users", message: "Пользователь удалён" });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setTabError({
+        tab: "users",
+        message: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
   async function saveLdap() {
-    setError(null);
-    setSavedHint(null);
+    setTabError(null);
+    setTabHint(null);
     try {
       const saved = await saveLdapSettings(ldap);
       setLdap({ ...saved, ldap_bind_password: "" });
-      setSavedHint("LDAP сохранён");
+      setTabHint({ tab: "ldap", message: "LDAP сохранён" });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setTabError({
+        tab: "ldap",
+        message: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 
-  async function saveInfra() {
-    setError(null);
-    setSavedHint(null);
+  async function saveGitlab() {
+    setTabError(null);
+    setTabHint(null);
     try {
-      const saved = await saveInfrastructureSettings(infra);
-      setInfra(saved);
-      setSavedHint(
-        saved.consul_enabled
-          ? saved.consul_reachable
-            ? "Инфраструктура сохранена · Consul доступен"
-            : "Инфраструктура сохранена · Consul недоступен (проверьте host/port)"
-          : "Инфраструктура сохранена · используются localhost / env"
-      );
+      const saved = await saveGitLabSettings(gitlab);
+      setGitlab({ ...EMPTY_GITLAB, ...saved });
+      setTabHint({ tab: "gitlab", message: "GitLab CI сохранён" });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setTabError({
+        tab: "gitlab",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  async function testGitlab() {
+    setTestingGitlab(true);
+    setTabError(null);
+    setTabHint(null);
+    try {
+      await saveGitLabSettings(gitlab);
+      const result = await testGitLabConnection();
+      if (result.ok) {
+        setTabHint({
+          tab: "gitlab",
+          message: result.project_path
+            ? `${result.message} (${result.project_path})`
+            : result.message,
+        });
+      } else {
+        setTabError({ tab: "gitlab", message: result.message });
+      }
+    } catch (e) {
+      setTabError({
+        tab: "gitlab",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setTestingGitlab(false);
     }
   }
 
   if (!open) return null;
+
+  const loading =
+    tab === "users" ? loadingUsers : tab === "ldap" ? loadingLdap : loadingGitlab;
+  const showError = tabError?.tab === tab ? tabError.message : null;
+  const showHint = tabHint?.tab === tab && !showError ? tabHint.message : null;
 
   return (
     <div className="docs-overlay" onClick={onClose}>
@@ -148,14 +255,14 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
             [
               ["users", "Пользователи"],
               ["ldap", "LDAP / AD"],
-              ["infra", "Инфраструктура"],
+              ["gitlab", "GitLab CI"],
             ] as const
           ).map(([id, label]) => (
             <button
               key={id}
               className={`pill-source ${tab === id ? "active" : ""}`}
               type="button"
-              onClick={() => setTab(id)}
+              onClick={() => switchTab(id)}
             >
               {label}
             </button>
@@ -163,10 +270,10 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
         </div>
 
         {loading && <div className="hint">Загрузка…</div>}
-        {error && <div className="error">{error}</div>}
-        {savedHint && !error && <div className="hint">{savedHint}</div>}
+        {showError && <div className="error">{showError}</div>}
+        {showHint && <div className="hint">{showHint}</div>}
 
-        {tab === "users" && !loading && (
+        {tab === "users" && !loadingUsers && (
           <>
             <section>
               <h3>Учётные записи</h3>
@@ -254,7 +361,7 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
           </>
         )}
 
-        {tab === "ldap" && !loading && (
+        {tab === "ldap" && !loadingLdap && (
           <section>
             <h3>Корпоративный LDAP / Active Directory</h3>
             <p className="hint">
@@ -334,140 +441,102 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
           </section>
         )}
 
-        {tab === "infra" && !loading && (
+        {tab === "gitlab" && !loadingGitlab && (
           <section>
-            <h3>Инфраструктура и discovery</h3>
+            <h3>GitLab CI и Grafana</h3>
             <p className="hint">
-              По умолчанию модули ходят друг к другу по <code>localhost</code> (или env в
-              Docker/k8s). Включите Consul, чтобы URL брались из KV{" "}
-              <code>{`{prefix}services/{{service}}/url`}</code> или из Catalog. Явный URL в
-              полях ниже имеет высший приоритет.
+              Trigger token и webhook secret хранятся только в Vault. Локально — env{" "}
+              <code>GITLAB_TRIGGER_TOKEN</code>, <code>GITLAB_WEBHOOK_SECRET</code>.
+              Webhook URL: <code>/api/runs/webhook/gitlab</code> (заголовок X-Gitlab-Token).
             </p>
-
-            <label className="inline" style={{ textTransform: "none", marginBottom: 14 }}>
-              <input
-                type="checkbox"
-                style={{ width: "auto" }}
-                checked={infra.consul_enabled}
-                onChange={(e) => setInfra({ ...infra, consul_enabled: e.target.checked })}
-              />
-              <span>Использовать Consul</span>
-            </label>
-
-            <div className="row">
-              <div className="field">
-                <label>Consul host</label>
-                <input
-                  value={infra.consul_host}
-                  onChange={(e) => setInfra({ ...infra, consul_host: e.target.value })}
-                  placeholder="localhost"
-                />
-              </div>
-              <div className="field" style={{ width: 120, flex: "none" }}>
-                <label>Port</label>
-                <input
-                  type="number"
-                  value={infra.consul_port}
-                  onChange={(e) =>
-                    setInfra({ ...infra, consul_port: Number(e.target.value) || 8500 })
-                  }
-                />
-              </div>
-              <div className="field">
-                <label>Datacenter (опц.)</label>
-                <input
-                  value={infra.consul_datacenter}
-                  onChange={(e) => setInfra({ ...infra, consul_datacenter: e.target.value })}
-                />
-              </div>
-            </div>
             <div className="field">
-              <label>KV prefix</label>
+              <label>GitLab base URL</label>
               <input
-                value={infra.consul_kv_prefix}
-                onChange={(e) => setInfra({ ...infra, consul_kv_prefix: e.target.value })}
-                placeholder="loadtest/"
+                value={gitlab.gitlab_base_url}
+                onChange={(e) => setGitlab({ ...gitlab, gitlab_base_url: e.target.value })}
+                placeholder="https://gitlab.corp.local"
               />
             </div>
             <div className="row">
               <div className="field">
-                <label>Service name · analyzer</label>
+                <label>Project ID или path</label>
                 <input
-                  value={infra.consul_service_analyzer}
+                  value={gitlab.gitlab_project_id}
+                  onChange={(e) => setGitlab({ ...gitlab, gitlab_project_id: e.target.value })}
+                  placeholder="123 или group/project"
+                />
+              </div>
+              <div className="field">
+                <label>Trigger ref (ветка/tag)</label>
+                <input
+                  value={gitlab.gitlab_trigger_ref}
+                  onChange={(e) => setGitlab({ ...gitlab, gitlab_trigger_ref: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="row">
+              <div className="field">
+                <label>Переменная для JMeter</label>
+                <input
+                  value={gitlab.gitlab_jmeter_variable}
                   onChange={(e) =>
-                    setInfra({ ...infra, consul_service_analyzer: e.target.value })
+                    setGitlab({ ...gitlab, gitlab_jmeter_variable: e.target.value })
                   }
                 />
               </div>
               <div className="field">
-                <label>Service name · k6-generator</label>
+                <label>Переменная для k6</label>
                 <input
-                  value={infra.consul_service_k6}
-                  onChange={(e) => setInfra({ ...infra, consul_service_k6: e.target.value })}
+                  value={gitlab.gitlab_k6_variable}
+                  onChange={(e) => setGitlab({ ...gitlab, gitlab_k6_variable: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="row">
+              <div className="field">
+                <label>Vault path — trigger token</label>
+                <input
+                  value={gitlab.gitlab_trigger_token_vault_path}
+                  onChange={(e) =>
+                    setGitlab({ ...gitlab, gitlab_trigger_token_vault_path: e.target.value })
+                  }
                 />
               </div>
               <div className="field">
-                <label>Service name · jmeter-builder</label>
+                <label>Vault path — webhook secret</label>
                 <input
-                  value={infra.consul_service_jmeter}
+                  value={gitlab.gitlab_webhook_secret_vault_path}
                   onChange={(e) =>
-                    setInfra({ ...infra, consul_service_jmeter: e.target.value })
+                    setGitlab({ ...gitlab, gitlab_webhook_secret_vault_path: e.target.value })
                   }
                 />
               </div>
             </div>
-
-            <h3 style={{ marginTop: 18 }}>Прямые URL модулей (override)</h3>
-            <p className="hint">Пусто = auto (Consul или localhost/env).</p>
             <div className="field">
-              <label>analyzer URL</label>
+              <label>Grafana base URL</label>
               <input
-                value={infra.analyzer_url}
-                onChange={(e) => setInfra({ ...infra, analyzer_url: e.target.value })}
-                placeholder="http://localhost:8000"
+                value={gitlab.grafana_base_url}
+                onChange={(e) => setGitlab({ ...gitlab, grafana_base_url: e.target.value })}
+                placeholder="https://grafana.corp.local"
               />
             </div>
             <div className="field">
-              <label>k6-generator URL</label>
+              <label>Шаблон dashboard ({`{run_id}`}, {`{from}`}, {`{to}`})</label>
               <input
-                value={infra.k6_generator_url}
-                onChange={(e) => setInfra({ ...infra, k6_generator_url: e.target.value })}
-                placeholder="http://localhost:8001"
+                value={gitlab.grafana_dashboard_template}
+                onChange={(e) =>
+                  setGitlab({ ...gitlab, grafana_dashboard_template: e.target.value })
+                }
               />
             </div>
-            <div className="field">
-              <label>jmeter-builder URL</label>
-              <input
-                value={infra.jmeter_builder_url}
-                onChange={(e) => setInfra({ ...infra, jmeter_builder_url: e.target.value })}
-                placeholder="http://localhost:8081"
-              />
+            <div className="inline" style={{ gap: 12 }}>
+              <button type="button" onClick={saveGitlab}>
+                Сохранить GitLab
+              </button>
+              <button type="button" className="ghost" onClick={testGitlab} disabled={testingGitlab}>
+                {testingGitlab ? "Проверка…" : "Проверить соединение"}
+              </button>
             </div>
-
-            <h3 style={{ marginTop: 18 }}>Резолв сейчас</h3>
-            <div className="hint" style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
-              <div>
-                analyzer → <code>{infra.resolved_analyzer_url}</code>
-              </div>
-              <div>
-                k6-generator → <code>{infra.resolved_k6_generator_url}</code>
-              </div>
-              <div>
-                jmeter-builder → <code>{infra.resolved_jmeter_builder_url}</code>
-              </div>
-              <div>
-                Consul:{" "}
-                {infra.consul_enabled
-                  ? infra.consul_reachable
-                    ? "reachable"
-                    : "unreachable"
-                  : "выкл."}
-              </div>
-            </div>
-
-            <button type="button" style={{ marginTop: 14 }} onClick={saveInfra}>
-              Сохранить инфраструктуру
-            </button>
           </section>
         )}
 

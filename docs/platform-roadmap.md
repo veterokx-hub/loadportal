@@ -26,7 +26,7 @@
 
 **Ценность:** снижает время подготовки сценария с дней до часов; единый контракт Scenario для JMeter и k6.
 
-**K8s:** Helm chart `deploy/helm/loadtest-portal`.
+**K8s:** манифесты / Argo формируются отдельно; эталон адресов — `config/consul-vault-config.yaml`.
 
 **Следующие шаги продукта:**
 - Экспорт Scenario в **Git** (GitOps-сценарии)

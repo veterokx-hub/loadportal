@@ -1,0 +1,52 @@
+# =============================================================================
+# consul-vault-config.yaml
+# =============================================================================
+# Единый конфиг адресов и discovery для Load Test Portal.
+# В k8s монтируется как ConfigMap в pod constructor (и при необходимости frontend).
+#
+# Секреты (пароли БД, LDAP bind, bootstrap-admin, Vault token) — НЕ здесь.
+# Секреты хранятся в Vault; в k8s подставляются через External Secrets / CSI / Argo.
+#
+# Приоритет URL модулей:
+#   1) modules.*-url (если не пусто)
+#   2) Consul KV/Catalog (если consul.enabled)
+#   3) env / k8s Service DNS defaults
+# =============================================================================
+
+loadtest:
+  discovery:
+    # --- Адреса Consul и Vault (сами сервисы discovery/secrets) ---
+    consul:
+      enabled: false
+      host: localhost          # в corp: consul.service.consul или ClusterIP
+      port: 8500
+      datacenter: ""
+      kv-prefix: loadtest/
+      # Имена сервисов в Consul Catalog (если enabled)
+      service-frontend: loadtest-frontend
+      service-constructor: loadtest-constructor
+      service-analyzer: loadtest-analyzer
+      service-k6: loadtest-k6-generator
+      service-jmeter: loadtest-jmeter-builder
+      service-postgres: loadtest-postgres
+
+    vault:
+      enabled: false
+      address: http://vault.corp.example:8200
+      # Путь KV для секретов портала (пароль БД, bootstrap-admin, LDAP bind)
+      kv-path: secret/data/loadtest/portal
+      # Токен / Auth — только через Vault Agent / ESO, не в ConfigMap
+
+    # --- Все адреса модулей (включая frontend → backend) ---
+    modules:
+      # Frontend → constructor API.
+      # Пустая строка = same-origin: браузер ходит на /api через Ingress (рекомендуется в k8s).
+      # Локально (docker compose): http://localhost:8080
+      frontend-api-base-url: ""
+
+      # Внутренние URL (constructor → workers). В k8s — Service DNS.
+      constructor-url: http://localhost:8080
+      analyzer-url: http://localhost:8000
+      k6-generator-url: http://localhost:8001
+      jmeter-builder-url: http://localhost:8081
+      postgres-jdbc-url: jdbc:postgresql://localhost:5432/loadtest

@@ -36,6 +36,18 @@ public class AuthController {
         }
     }
 
+    /** Проверка живой сессии (frontend после F5 / пересоздания БД). */
+    @GetMapping("/me")
+    public LoginResponse me(HttpServletRequest request) {
+        String h = request.getHeader("Authorization");
+        if (h == null || !h.startsWith("Bearer ")) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Требуется авторизация");
+        }
+        var ctx = authService.resolve(h.substring(7).trim())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Сессия недействительна"));
+        return new LoginResponse("", ctx.username(), ctx.role(), ctx.mustChangePassword());
+    }
+
     @PostMapping("/change-password")
     public void changePassword(@RequestBody ChangeOwnPasswordRequest req, HttpServletRequest request) {
         String h = request.getHeader("Authorization");

@@ -5,9 +5,9 @@ import { useState } from "react";
 type DocsSectionId =
   | "about"
   | "scenario"
+  | "run"
   | "theory"
   | "environment"
-  | "run"
   | "analysis"
   | "report";
 
@@ -17,10 +17,10 @@ const SECTIONS: {
   available: boolean;
 }[] = [
   { id: "about", label: "О портале", available: true },
-  { id: "scenario", label: "Подготовка сценария", available: true },
-  { id: "theory", label: "Теория НТ", available: false },
+  { id: "scenario", label: "Сценарий", available: true },
+  { id: "run", label: "Запуск", available: true },
+  { id: "theory", label: "Теория НТ", available: true },
   { id: "environment", label: "Стенд", available: false },
-  { id: "run", label: "Запуск", available: false },
   { id: "analysis", label: "Анализ", available: false },
   { id: "report", label: "Отчёт", available: false },
 ];
@@ -29,10 +29,7 @@ function SoonBlock({ title }: { title: string }) {
   return (
     <section className="docs-soon">
       <h3>{title}</h3>
-      <p className="muted">
-        Раздел документации готовится. Здесь появятся инструкции по соответствующему
-        модулю портала.
-      </p>
+      <p className="muted">Раздел документации готовится вместе с модулем.</p>
     </section>
   );
 }
@@ -43,19 +40,15 @@ function AboutDocs() {
       <section>
         <h3>Назначение</h3>
         <p>
-          <strong>НТ · Портал</strong> — корпоративная платформа нагрузочного тестирования.
-          Сейчас доступен модуль <strong>«Сценарий»</strong>: подготовка сценария из
-          OpenAPI/Swagger или Postman и сборка артефактов для <strong>JMeter</strong> (.jmx)
-          или <strong>k6</strong> (.js).
+          <strong>НТ · Портал</strong> — платформа для подготовки и запуска нагрузочных
+          тестов. Сценарий собирается из OpenAPI/Postman в артефакт{" "}
+          <strong>JMeter</strong> или <strong>k6</strong>, прогон фиксируется в разделе
+          «Запуск» и связывается с задачей Jira.
         </p>
       </section>
 
       <section>
-        <h3>Разделы портала</h3>
-        <p className="muted" style={{ marginTop: -4 }}>
-          Глобальная навигация под шапкой. Активен только «Сценарий»; остальные открывают
-          экран «скоро».
-        </p>
+        <h3>Разделы</h3>
         <table className="docs-table">
           <thead>
             <tr>
@@ -70,7 +63,7 @@ function AboutDocs() {
               <td>1</td>
               <td>Сценарий</td>
               <td>доступен</td>
-              <td>Мастер из 4 шагов, пульс, сборка, история</td>
+              <td>Импорт → параметры → профиль → сборка</td>
             </tr>
             <tr>
               <td>2</td>
@@ -81,57 +74,90 @@ function AboutDocs() {
             <tr>
               <td>3</td>
               <td>Запуск</td>
-              <td>скоро</td>
-              <td>Генератор нагрузки в k8s</td>
+              <td>доступен</td>
+              <td>Прогон по сборке/скрипту, Jira, статусы</td>
             </tr>
             <tr>
               <td>4</td>
               <td>Анализ</td>
               <td>скоро</td>
-              <td>Метрики, baseline, рекомендации</td>
+              <td>Метрики и аномалии по run_id</td>
             </tr>
             <tr>
               <td>5</td>
               <td>Отчёт</td>
               <td>скоро</td>
-              <td>PDF / Confluence</td>
+              <td>Итоговый документ по run_id</td>
             </tr>
           </tbody>
         </table>
+        <p className="hint">
+          URL разделов и шагов — отдельные path. «Назад» в браузере возвращает на предыдущий
+          экран. Настройки и эта справка открываются поверх, без смены адреса.
+        </p>
       </section>
 
       <section>
         <h3>Вход и роли</h3>
         <ul>
           <li>
-            Первый запуск: <code>admin</code> / <code>admin</code> —{" "}
-            <strong>обязательная смена пароля</strong> (минимум 8 символов).
+            Первый вход: <code>admin</code> / <code>admin</code> → обязательная смена пароля
+            (≥ 8 символов).
+          </li>
+          <li>Сессия: Bearer на 24 ч. Черновик сценария — в localStorage браузера.</li>
+          <li>
+            <strong>ADMIN</strong>: пользователи, LDAP, GitLab CI.
           </li>
           <li>
-            Сессия: Bearer-токен на 24 часа. Состояние мастера сценария сохраняется в
-            браузере (localStorage).
+            <strong>USER</strong>: сценарии и свои прогоны; история сборок — до 20 записей.
           </li>
           <li>
-            Роль <strong>ADMIN</strong>: настройки ⚙ — пользователи и LDAP/AD.
-          </li>
-          <li>
-            Роль <strong>USER</strong>: работа со сценариями; своя история сборок (до 20).
-          </li>
-          <li>
-            LDAP: вход доменной учёткой (sAMAccountName). Группы AD не синхронизируются —
-            роли задаются в портале. При первом LDAP-входе пользователь создаётся с ролью
-            USER.
+            LDAP: логин = sAMAccountName. Роли в AD не синхронизируются — задаются в портале.
           </li>
         </ul>
       </section>
 
       <section>
-        <h3>Куда смотреть дальше</h3>
-        <p>
-          Подробности по текущему функционалу — в подразделе{" "}
-          <strong>«Подготовка сценария»</strong> слева. Теория НТ и инструкции по стенду,
-          запуску, анализу и отчёту появятся в отдельных вкладках.
-        </p>
+        <h3>Идентификаторы</h3>
+        <table className="docs-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Где</th>
+              <th>Зачем</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>build_id</code>
+              </td>
+              <td>Сценарий</td>
+              <td>Снимок сценария + движок</td>
+            </tr>
+            <tr>
+              <td>
+                <code>script_id</code>
+              </td>
+              <td>Сценарий / Запуск</td>
+              <td>Файл .jmx / .js (сборка или upload)</td>
+            </tr>
+            <tr>
+              <td>
+                <code>test_id</code>
+              </td>
+              <td>Запуск</td>
+              <td>Ключ задачи Jira</td>
+            </tr>
+            <tr>
+              <td>
+                <code>run_id</code>
+              </td>
+              <td>Запуск → Анализ / Отчёт</td>
+              <td>Конкретный прогон</td>
+            </tr>
+          </tbody>
+        </table>
       </section>
     </>
   );
@@ -143,405 +169,289 @@ function ScenarioDocs() {
       <section>
         <h3>Обзор</h3>
         <p>
-          Раздел <strong>«Сценарий»</strong> — мастер из четырёх шагов. Единая доменная
-          модель <code>Scenario</code> не зависит от движка: JMeter и k6 — производные
-          артефакты на шаге сборки.
+          Мастер из 4 шагов. Модель <code>Scenario</code> общая; JMeter и k6 — артефакты на
+          финальном шаге.
         </p>
         <ol>
           <li>
-            <strong>Источник</strong> — импорт OpenAPI или Postman.
+            <strong>Источник</strong> — OpenAPI или Postman.
           </li>
           <li>
-            <strong>Запросы</strong> — состав, методы, пути с <code>{"{param}"}</code>.
+            <strong>Запросы</strong> — метод, имя, путь с <code>{"{param}"}</code>.
           </li>
           <li>
             <strong>Корреляция и параметры</strong> — Header / Query / Body / Path, CSV,
-            экстракторы, валидация.
+            экстракторы.
           </li>
           <li>
-            <strong>Интенсивность и сборка</strong> — профиль RPS, AutoStop, JMeter/k6,
-            история.
+            <strong>Интенсивность и сборка</strong> — RPS, AutoStop, сохранить / выгрузить /
+            к запуску.
           </li>
         </ol>
         <p>
-          Над шагами — <strong>«Пульс сценария»</strong>: оценка готовности, карта потока,
-          чеклист. Сборка блокируется при критических ошибках пульса.
+          <strong>Пульс сценария</strong> над шагами: готовность 0–100, блокеры. При
+          блокерах сборка недоступна.
         </p>
       </section>
 
       <section>
-        <h3>Шаг 1 · Источник</h3>
+        <h3>Источник и запросы</h3>
         <ul>
           <li>
-            <strong>Swagger / OpenAPI</strong> — по URL (прямой JSON/YAML,{" "}
-            <code>swagger.json</code>, страница Swagger UI) или вставка содержимого.
+            OpenAPI — URL (JSON/YAML, Swagger UI) или вставка текста. Postman — только JSON
+            коллекции.
           </li>
           <li>
-            <strong>Postman Collection</strong> — только вставка JSON (URL не
-            поддерживается).
-          </li>
-          <li>Опционально: имя сценария (иначе берётся из спецификации).</li>
-          <li>
-            Analyzer нормализует операции в список запросов с предполагаемыми параметрами
-            и базовым URL.
-          </li>
-          <li>
-            Ошибки SSL / недоступности URL зависят от сетевых настроек сервиса analyzer в
-            кластере (egress, CA).
+            В пути <code>{"{id}"}</code> → Path-параметр (имя только из URL). Header /
+            Query / Body добавляются на шаге 3.
           </li>
         </ul>
       </section>
 
       <section>
-        <h3>Шаг 2 · Запросы</h3>
+        <h3>Параметры и корреляция</h3>
         <ul>
           <li>
-            Редактируются метод (select), человекочитаемое имя и <strong>путь</strong>.
+            Источники значения: константа, генератор, корреляция (из ответа предыдущего
+            запроса), CSV.
           </li>
           <li>
-            Фрагменты <code>{"{name}"}</code> в пути автоматически становятся{" "}
-            <strong>Path-параметрами</strong>. Их нельзя добавить на шаге 3 — только
-            настроить значение. Удаление/переименование path — через правку URL здесь.
+            Экстракторы: JSONPath, Regex, Boundary. Порядок запросов важен.
           </li>
-          <li>
-            <code>{"{…}"}</code> в теле также распознаются как body-параметры (с
-            сохранением уже настроенных Header/Query).
-          </li>
-          <li>Можно добавить свой запрос или удалить лишний.</li>
-          <li>
-            На шаге 3 в шапке карточки отображается путь с подсветкой{" "}
-            <code>{"{param}"}</code>.
-          </li>
+          <li>Валидация: HTTP-код и опционально Contains по телу.</li>
+          <li>«Далее» недоступно, пока обязательные (*) параметры пусты.</li>
         </ul>
       </section>
 
       <section>
-        <h3>Шаг 3 · Корреляция и параметры</h3>
-        <h4>Датасеты (CSV)</h4>
+        <h3>Интенсивность и сборка</h3>
         <ul>
           <li>
-            Общие CSV на уровне сценария: имя, колонки (первая строка), строки данных,
-            флаг случайного порядка.
+            <strong>Постоянная нагрузка</strong> — разгон + удержание RPS.
           </li>
-          <li>Лимит строк в редакторе: 2000 (для k6 большие файлы уходят во внешний CSV в zip).</li>
           <li>
-            У запроса выбирается датасет — колонки становятся доступны в источнике «CSV».
+            <strong>Поиск максимума</strong> — ступени до целевого RPS.
+          </li>
+          <li>
+            Группы запросов: связаны корреляцией или одним CSV — одна Thread Group / k6
+            scenario.
+          </li>
+          <li>
+            Кнопки: <strong>К запуску теста</strong> (основная) → сохраняет сборку и
+            открывает «Запуск»; <strong>Сохранить сборку</strong>;{" "}
+            <strong>Выгрузить скрипт</strong> (скачать файл).
           </li>
         </ul>
+        <p className="hint">
+          JMeter на runner: плагины <code>jpgc-casutg</code>, <code>jpgc-tst</code>, при
+          AutoStop — <code>jpgc-autostop</code>, для метрик — prometheus-listener.
+        </p>
+      </section>
+    </>
+  );
+}
 
-        <h4>Вкладки параметров</h4>
+function RunDocs() {
+  return (
+    <>
+      <section>
+        <h3>Обзор</h3>
+        <p>
+          Раздел <strong>«Запуск»</strong>: создать прогон по готовой сборке или
+          загруженному скрипту, указать задачу Jira, смотреть статусы.
+        </p>
+        <ol>
+          <li>
+            <strong>Новый запуск</strong> — Jira, скрипт, параметры runner.
+          </li>
+          <li>
+            <strong>Прогоны</strong> — список с фильтром.
+          </li>
+          <li>
+            <strong>Карточка</strong> — детали, ссылки, история событий.
+          </li>
+        </ol>
+      </section>
+
+      <section>
+        <h3>Новый запуск</h3>
         <ul>
           <li>
-            <strong>Header / Query / Body</strong> — можно добавлять и удалять. Пустая
-            вкладка показывает «Нет параметров» и кнопку «Добавить».
+            <strong>Задача в Jira</strong> (<code>test_id</code>) — обязательна.
           </li>
           <li>
-            <strong>Path</strong> — только из URL шага 2; имя вида <code>{"{id}"}</code>{" "}
-            только для чтения; настраивается источник значения.
+            Скрипт: из истории сборок модуля «Сценарий» или загрузка .jmx / .js (+ опционально
+            ссылка на git).
           </li>
           <li>
-            Query в JMeter попадает в HTTP Arguments (Parameters), не в path; в k6 — как{" "}
-            <code>?key=</code>.
+            Движок, имя сценария и Target URL берутся из сборки — заново не вводятся.
+          </li>
+          <li>
+            Для JMeter: память JVM (МБ). Для k6 дополнительных полей нет — профиль уже в
+            скрипте.
           </li>
         </ul>
+        <p className="hint">
+          Сейчас кнопка создаёт карточку прогона (<code>run_id</code>, статус «в очереди»).
+          Вызов GitLab Trigger Pipeline будет подключён к той же кнопке.
+        </p>
+      </section>
 
-        <h4>Источники значения</h4>
+      <section>
+        <h3>Настройки GitLab (ADMIN)</h3>
+        <p>
+          ⚙ → <strong>GitLab CI</strong>: URL, project, ветка, пути Vault для trigger token и
+          webhook secret, Grafana. Секреты в UI не вводятся. Локально: env{" "}
+          <code>GITLAB_TRIGGER_TOKEN</code>, <code>GITLAB_WEBHOOK_SECRET</code>.
+        </p>
+        <p>
+          Webhook: <code>POST /api/runs/webhook/gitlab</code>, заголовок{" "}
+          <code>X-Gitlab-Token</code>, события Pipeline.
+        </p>
+      </section>
+    </>
+  );
+}
+
+function TheoryDocs() {
+  return (
+    <>
+      <section>
+        <h3>Зачем нагрузочное тестирование</h3>
+        <p>
+          Проверить, как система ведёт себя под ожидаемой и пиковой нагрузкой: хватает ли
+          мощности, где узкие места, не ломается ли SLA по времени ответа и ошибкам.
+          Портал закрывает путь «спека → скрипт → прогон» без ручной сборки .jmx/.js с нуля.
+        </p>
+      </section>
+
+      <section>
+        <h3>Ключевые метрики</h3>
         <table className="docs-table">
           <thead>
             <tr>
-              <th>Источник</th>
-              <th>Назначение</th>
+              <th>Метрика</th>
+              <th>Смысл</th>
+              <th>В портале</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>Константа</td>
-              <td>
-                Фиксированная строка; допускает <code>${"{"}var{"}"}</code> и функции
-                JMeter/k6-аналоги в тексте
-              </td>
+              <td>RPS / throughput</td>
+              <td>Запросов в секунду</td>
+              <td>Целевой RPS групп на шаге интенсивности</td>
             </tr>
             <tr>
-              <td>Генератор</td>
-              <td>UUID, случайное число/строка, счётчик, метка времени</td>
+              <td>Latency (p95, p99)</td>
+              <td>Хвост времени ответа</td>
+              <td>Смотрите в Grafana после прогона</td>
             </tr>
             <tr>
-              <td>Корреляция</td>
-              <td>Переменная из экстрактора <em>предыдущего</em> запроса</td>
+              <td>Error rate</td>
+              <td>Доля неуспешных ответов</td>
+              <td>AutoStop + assertions / checks</td>
             </tr>
             <tr>
-              <td>CSV</td>
-              <td>Колонка выбранного датасета запроса</td>
+              <td>VU / threads</td>
+              <td>Параллельные пользователи</td>
+              <td>Считаются из RPS и ожидаемой латентности</td>
             </tr>
           </tbody>
         </table>
-
-        <h4>Генераторы (JMeter-семантика)</h4>
-        <ul>
-          <li>
-            <code>${"{"}__UUID(){"}"}</code> — UUID
-          </li>
-          <li>
-            <code>${"{"}__Random(min,max){"}"}</code> — целое
-          </li>
-          <li>
-            <code>${"{"}__RandomString(len){"}"}</code> — строка заданной длины
-          </li>
-          <li>
-            <code>${"{"}__counter(FALSE){"}"}</code> — счётчик
-          </li>
-          <li>
-            <code>${"{"}__time(format){"}"}</code> — время; пустой format = Unix мс;
-            иначе SimpleDateFormat
-          </li>
-        </ul>
-
-        <h4>Извлечение из ответа</h4>
-        <ul>
-          <li>
-            Типы: <strong>JSONPath</strong>, <strong>Regex</strong>,{" "}
-            <strong>Boundary</strong> (left|right).
-          </li>
-          <li>
-            Имя переменной без <code>${"{"}{"}"}</code> — в следующих запросах доступно как{" "}
-            <code>${"{"}имя{"}"}</code>.
-          </li>
-          <li>
-            Порядок запросов важен: корреляция видит только экстракторы с меньшим{" "}
-            <code>order</code>.
-          </li>
-        </ul>
-
-        <h4>Валидация ответа</h4>
-        <ul>
-          <li>Проверка HTTP-кода (Response Assertion).</li>
-          <li>
-            Опционально Contains по телу (текст; часто имя поля из swagger). Пусто —
-            проверка тела не добавляется.
-          </li>
-        </ul>
-
-        <h4>Переход дальше</h4>
-        <p>
-          Кнопка «Далее» недоступна, пока обязательные параметры (*) без значения.
-          Обязательность типична для path/body из спецификации; header/query по умолчанию
-          необязательны.
-        </p>
       </section>
 
       <section>
-        <h3>Пульс сценария</h3>
+        <h3>Модели нагрузки</h3>
         <ul>
           <li>
-            Оценка <strong>0–100</strong>, подпись готовности, пиковый RPS и длительность
-            профиля.
+            <strong>Open model (arrival rate)</strong> — задаём поток запросов (RPS). Так
+            работает k6 <code>ramping-arrival-rate</code> и Throughput Shaping в JMeter.
+            Ближе к реальности «много клиентов независимо».
           </li>
           <li>
-            <strong>Карта потока</strong>: узлы-запросы и рёбра корреляции (какая
-            переменная связывает A→B).
-          </li>
-          <li>
-            <strong>Чеклист</strong>: блокеры (error), предупреждения, советы. Клик —
-            переход на шаг. Блокеры запрещают сборку на шаге 4.
-          </li>
-          <li>
-            <strong>«Копировать описание»</strong> — текст для согласования/отчёта.
-          </li>
-          <li>
-            Типичные проверки: пустой обязательный параметр; корреляция на несуществующую
-            переменную; CSV без датасета/колонки; нулевой RPS; отсутствие проверок ответа.
-          </li>
-        </ul>
-      </section>
-
-      <section>
-        <h3>Группировка запросов</h3>
-        <p>
-          На шаге интенсивности запросы объединяются в группы (одна Thread Group / один
-          k6 scenario), если:
-        </p>
-        <ul>
-          <li>
-            связаны корреляцией (<code>${"{"}var{"}"}</code> из экстрактора предыдущего),
-            или
-          </li>
-          <li>используют один и тот же CSV-датасет.</li>
-        </ul>
-        <p>
-          Остальные — отдельные группы со своей интенсивностью. Внутри группы RPS
-          распределяется с учётом <strong>повторов</strong> запроса (Loop / repeat).
-        </p>
-      </section>
-
-      <section>
-        <h3>Шаг 4 · Интенсивность и сборка</h3>
-        <h4>Режимы теста</h4>
-        <ul>
-          <li>
-            <strong>Постоянная нагрузка (ramp_hold)</strong> — разгон + удержание целевого
-            RPS.
-          </li>
-          <li>
-            <strong>Поиск максимума (max_search)</strong> — ступени: число ступеней и
-            длительность каждой; целевой RPS группы — пик последней ступени.
-          </li>
-        </ul>
-        <ul>
-          <li>
-            <strong>Ожидаемая латентность</strong> — для оценки числа потоков/VU.
-          </li>
-          <li>
-            График профиля нагрузки по группам; общие ramp/hold можно синхронизировать
-            чекбоксами.
-          </li>
-          <li>
-            <strong>Повтор запроса (×N)</strong> — доля RPS внутри группы пропорциональна
-            повторам.
-          </li>
-        </ul>
-
-        <h4>AutoStop</h4>
-        <p>
-          При включении: порог доли ошибок за окно секунд и/или порог среднего времени
-          ответа. В JMeter — listener jpgc-autostop; в k6 — thresholds.
-        </p>
-
-        <h4>Prometheus (только JMeter)</h4>
-        <p>
-          В каждый .jmx добавляется Backend Listener{" "}
-          <code>com.github.kolesnikovm.PrometheusListener</code>. Хост метрик — на стороне
-          машины/пода с JMeter; в портале задаётся порт exporter (по умолчанию 9001).
-        </p>
-        <table className="docs-table">
-          <thead>
-            <tr>
-              <th>Параметр</th>
-              <th>Описание</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>
-                <code>testName</code>
-              </td>
-              <td>Имя сценария</td>
-            </tr>
-            <tr>
-              <td>
-                <code>runId</code>
-              </td>
-              <td>Идентификатор прогона</td>
-            </tr>
-            <tr>
-              <td>
-                <code>applicationPort</code> / exporter port
-              </td>
-              <td>Порт HTTP <code>/metrics</code></td>
-            </tr>
-            <tr>
-              <td>
-                <code>samplersRegExp</code>
-              </td>
-              <td>
-                Фильтр сэмплеров (<code>.*</code> — все)
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <code>sloLevels</code>
-              </td>
-              <td>
-                Корзины гистограммы, напр. <code>0.1;1</code>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <p className="hint">
-          Для k6 отдельный Prometheus listener не генерируется — используются checks и
-          thresholds; remote write настраивается при запуске runner&apos;а (модуль
-          «Запуск»).
-        </p>
-
-        <h4>Выбор движка и сборка</h4>
-        <ul>
-          <li>
-            <strong>JMeter</strong> — скачивается .jmx (или zip с CSV при необходимости).
-          </li>
-          <li>
-            <strong>k6</strong> — .js или zip при больших датасетах.
-          </li>
-          <li>
-            Успешная сборка пишется в <strong>историю сборок</strong> пользователя (хранится
-            последние <strong>20</strong>). Можно восстановить сценарий из истории.
-          </li>
-        </ul>
-      </section>
-
-      <section>
-        <h3>Что попадает в JMeter (.jmx)</h3>
-        <ul>
-          <li>Concurrency Thread Group + Throughput Shaping Timer на группу</li>
-          <li>Loop Controller при repeat &gt; 1</li>
-          <li>CSV Data Set / Random CSV Data Set</li>
-          <li>JSON/Regex/Boundary extractors</li>
-          <li>Response Assertion (код + Contains)</li>
-          <li>AutoStop Listener (jpgc-autostop) при включении</li>
-          <li>Prometheus Backend Listener (Колесников) по умолчанию</li>
-          <li>Header / Query (Arguments) / Body / Path из параметров</li>
-        </ul>
-      </section>
-
-      <section>
-        <h3>Что попадает в k6 (.js)</h3>
-        <ul>
-          <li>
-            <code>ramping-arrival-rate</code> — open-model по RPS
-          </li>
-          <li>Корреляция через переменные сценария, <code>check()</code></li>
-          <li>thresholds для AutoStop</li>
-          <li>SharedArray / внешний CSV в zip при больших датасетах (&gt;2000 строк)</li>
-        </ul>
-      </section>
-
-      <section>
-        <h3>Плагины JMeter (на машине запуска)</h3>
-        <ul>
-          <li>
-            <code>jpgc-casutg</code> — Concurrency Thread Group
-          </li>
-          <li>
-            <code>jpgc-tst</code> — Throughput Shaping Timer
-          </li>
-          <li>
-            <code>jpgc-autostop</code> — AutoStop (если включён в сценарии)
-          </li>
-          <li>
-            <code>jmeter-prometheus-listener</code> — Prometheus Backend Listener в{" "}
-            <code>lib/ext</code>
+            <strong>Closed model (VU)</strong> — фиксированное число пользователей, которые
+            ждут ответа и снова идут. Удобно для простых скриптов, но при росте латентности
+            throughput падает сам.
           </li>
         </ul>
         <p className="hint">
-          Установка: JMeter Plugins Manager → соответствующие плагины. Без них .jmx из
-          портала может не открыться или не дать целевой RPS.
+          В портале профиль строится вокруг <strong>RPS</strong> (open model). Поле
+          «ожидаемая латентность» нужно, чтобы оценить число потоков/VU.
         </p>
       </section>
 
       <section>
-        <h3>Практические советы</h3>
+        <h3>Режимы в портале</h3>
         <ul>
           <li>
-            Сначала настройте login/token → экстрактор → заголовок Authorization в
-            следующих запросах.
+            <strong>Постоянная нагрузка</strong> — разгон до целевого RPS и удержание.
+            Типичный smoke / soak / нагрузка «как в проде».
           </li>
           <li>
-            Не хардкодьте prod URL в path: base URL сценария и будущий override на стенде
-            (раздел «Стенд»).
+            <strong>Поиск максимума</strong> — ступени вверх, пока не упрётесь в SLA или
+            ошибки. Для оценки потолка системы.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Корреляция и реалистичность</h3>
+        <p>
+          Цепочка login → token → защищённый API должна идти в одной группе запросов:
+          экстрактор на ответе, параметр «корреляция» на следующем шаге. Иначе скрипт бьёт
+          «пустыми» или устаревшими токенами и greзит картину ошибок.
+        </p>
+        <ul>
+          <li>CSV — разные пользователи/данные без хардкода.</li>
+          <li>Path/body из спеки чаще обязательны (*); header/query — по необходимости.</li>
+          <li>Assertions/checks — ловят функциональные регрессии под нагрузкой.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>AutoStop</h3>
+        <p>
+          Автоостановка при превышении доли ошибок или среднего времени ответа за окно
+          времени. Экономит стенд и сразу фиксирует точку отказа. Включайте на поиск
+          максимума и длинных прогонах.
+        </p>
+      </section>
+
+      <section>
+        <h3>Практический чеклист перед прогоном</h3>
+        <ol>
+          <li>«Пульс сценария» без блокеров; корреляции и CSV согласованы.</li>
+          <li>Target URL — стенд, не prod (пока нет модуля «Стенд» — проверяйте base URL).</li>
+          <li>Выберите движок: JMeter (плагины на runner) или k6.</li>
+          <li>
+            Сохраните сборку → «Запуск»: укажите Jira <code>test_id</code>, для JMeter —
+            разумный heap.
           </li>
           <li>
-            Смотрите пульс перед сборкой: блокеры дешевле исправить в UI, чем в JMeter GUI.
+            Договоритесь о наблюдаемости: Grafana dashboard в настройках GitLab, метки
+            run_id.
           </li>
           <li>
-            История сборок привязана к пользователю — у коллеги свой список.
+            После прогона сохраните <code>run_id</code> — им будут пользоваться Анализ и
+            Отчёт.
+          </li>
+        </ol>
+      </section>
+
+      <section>
+        <h3>Типичные ошибки интерпретации</h3>
+        <ul>
+          <li>
+            Рост RPS при росте ошибок — это не «пропускная способность», а деградация.
+          </li>
+          <li>
+            Сравнение p50 без p95/p99 скрывает хвосты, от которых страдают пользователи.
+          </li>
+          <li>
+            Тест с одним пользователем в CSV не выявляет блокировок и contention.
+          </li>
+          <li>
+            Слишком короткий разгон — ложные пики на прогреве кэшей и пулов соединений.
           </li>
         </ul>
       </section>
@@ -550,7 +460,7 @@ function ScenarioDocs() {
 }
 
 export function Documentation({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [section, setSection] = useState<DocsSectionId>("scenario");
+  const [section, setSection] = useState<DocsSectionId>("about");
 
   if (!open) return null;
 
@@ -561,7 +471,7 @@ export function Documentation({ open, onClose }: { open: boolean; onClose: () =>
           <div>
             <h2>Документация</h2>
             <p className="muted" style={{ margin: "4px 0 0", fontSize: 12 }}>
-              НТ · Портал · справка по разделам
+              НТ · Портал · справка
             </p>
           </div>
           <button type="button" className="ghost small" onClick={onClose}>
@@ -589,11 +499,11 @@ export function Documentation({ open, onClose }: { open: boolean; onClose: () =>
           <div className="docs-content">
             {section === "about" && <AboutDocs />}
             {section === "scenario" && <ScenarioDocs />}
-            {section === "theory" && <SoonBlock title="Теория нагрузочного тестирования" />}
+            {section === "run" && <RunDocs />}
+            {section === "theory" && <TheoryDocs />}
             {section === "environment" && <SoonBlock title="Стенд" />}
-            {section === "run" && <SoonBlock title="Запуск теста" />}
-            {section === "analysis" && <SoonBlock title="Анализ результатов" />}
-            {section === "report" && <SoonBlock title="Формирование отчёта" />}
+            {section === "analysis" && <SoonBlock title="Анализ" />}
+            {section === "report" && <SoonBlock title="Отчёт" />}
           </div>
         </div>
       </div>

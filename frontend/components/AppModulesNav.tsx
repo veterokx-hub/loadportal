@@ -1,15 +1,15 @@
 "use client";
 
 import type { AppModule, AppModuleId } from "@/lib/modules";
+import { MODULE_PATH } from "@/lib/routes";
+import Link from "next/link";
 
 export function AppModulesNav({
   modules,
   active,
-  onSelect,
 }: {
   modules: AppModule[];
   active: AppModuleId;
-  onSelect: (id: AppModuleId) => void;
 }) {
   return (
     <nav className="module-rail" aria-label="Разделы портала">
@@ -17,20 +17,19 @@ export function AppModulesNav({
         {modules.map((m, i) => {
           const isActive = m.id === active;
           return (
-            <button
+            <Link
               key={m.id}
-              type="button"
+              href={MODULE_PATH[m.id]}
               className={`module-tab ${isActive ? "active" : ""} ${
                 m.available ? "" : "soon"
               }`}
               aria-current={isActive ? "page" : undefined}
               title={m.available ? m.title : `${m.title} — скоро`}
-              onClick={() => onSelect(m.id)}
             >
               <span className="module-tab-num">{i + 1}</span>
               <span className="module-tab-label">{m.nav}</span>
               {!m.available && <span className="module-tab-soon">скоро</span>}
-            </button>
+            </Link>
           );
         })}
       </div>

@@ -5,7 +5,8 @@
 Связанные материалы:
 - [`architecture-overview.md`](architecture-overview.md) — целевая архитектура
 - [`platform-roadmap.md`](platform-roadmap.md) — пять модулей
-- [`deploy/k8s.md`](deploy/k8s.md) — деплой модуля 1
+- [`docs/domain-model.md`](domain-model.md) — контракт Scenario
+- Конфиг адресов: `config/consul-vault-config.yaml` (ConfigMap; k8s манифесты — вне репозитория)
 - [`domain-model.md`](domain-model.md) — контракт `Scenario`
 
 ---
@@ -19,7 +20,7 @@
 | `analyzer` | ✅ | OpenAPI / Postman → `Scenario` |
 | `k6-generator` | ✅ | `Scenario` → k6 `.js` (отдельный сервис) |
 | PostgreSQL | ✅ | users, sessions, LDAP settings, build history (20 на пользователя) |
-| Helm chart | ✅ | `deploy/helm/loadtest-portal` |
+| Исходники модулей | ✅ | `frontend/`, `constructor/`, … |
 | Auth | ✅ | Bearer-сессии; admin — принудительная смена пароля; LDAP bind+search без групп |
 | UI параметров | ✅ | Вкладки Header/Query/Body/Path; Path только из URL шага 2 |
 
@@ -251,7 +252,7 @@ BuildRecord (buildId)
 
 ```
 Неделя 1   Уточнения §6.4 → выбор варианта деплоя (A/B/C/D)
-Неделя 1–2 Контракт TestEnvironment + API skeleton в core-api
+Неделя 1–2 Контракт TestEnvironment + API skeleton в constructor
 Неделя 2–3 Deploy controller/Job: ns + WireMock + (optional) SUT Helm
 Неделя 3   UI «Стенд» + status polling
 Неделя 4   POC: k6 Job → baseUrl; teardown; demo пилоту

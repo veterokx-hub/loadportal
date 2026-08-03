@@ -28,7 +28,6 @@ export function clearSession() {
   localStorage.removeItem(USER_KEY);
   localStorage.removeItem(ROLE_KEY);
   localStorage.removeItem(MUST_CHANGE_KEY);
-  localStorage.removeItem("ltp-auth");
 }
 
 export function getSession(): AuthSession | null {

@@ -91,9 +91,8 @@ export function Step1Source({
             onChange={(e) => setUrl(e.target.value)}
           />
           <div className="hint">
-            Поддерживаются прямые ссылки на JSON/YAML спецификацию (напр.{" "}
-            <code>.../swagger.json</code>, <code>.../v3/api-docs</code>), а также страница
-            Swagger UI — портал попробует найти спеку автоматически (springdoc/springfox).
+            JSON/YAML спека (<code>swagger.json</code>, <code>v3/api-docs</code>) или страница
+            Swagger UI — портал найдёт спецификацию сам.
           </div>
         </div>
       ) : (

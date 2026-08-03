@@ -1,4 +1,4 @@
-// Доменная модель (зеркало контракта core-api / analyzer, snake_case JSON).
+// Доменная модель (зеркало контракта constructor / analyzer, snake_case JSON).
 // См. docs/domain-model.md.
 
 export type SourceType = "openapi" | "postman";

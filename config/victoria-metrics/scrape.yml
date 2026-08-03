@@ -1,0 +1,38 @@
+# Конфигурация сбора метрик портала для VictoriaMetrics.
+# Формат совместим с Prometheus scrape_config: VM читает его через -promscrape.config.
+#
+# Все модули отдают /metrics в text format Prometheus.
+# scrape_interval короткий (15s) — портал локальный, нагрузка на сервисы минимальна.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 5s
+
+scrape_configs:
+  - job_name: constructor
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["constructor:8080"]
+        labels:
+          module: constructor
+
+  - job_name: jmeter-builder
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["jmeter-builder:8081"]
+        labels:
+          module: jmeter-builder
+
+  - job_name: analyzer
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["analyzer:8000"]
+        labels:
+          module: analyzer
+
+  - job_name: k6-generator
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["k6-generator:8001"]
+        labels:
+          module: k6-generator

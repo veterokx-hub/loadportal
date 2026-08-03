@@ -10,7 +10,7 @@
 flowchart TB
   subgraph M1["Модуль 1 · Подготовка скрипта ✅"]
     UI[frontend]
-    API[core-api]
+    API[constructor]
     AN[analyzer]
     K6G[k6-generator]
     PG[(PostgreSQL)]
@@ -85,7 +85,7 @@ flowchart LR
   AN --> SC[Scenario JSON]
   SC --> UI[Редактор UI]
   UI --> SC
-  SC --> API[core-api]
+  SC --> API[constructor]
   API --> JMX[.jmx]
   API --> JS[.js k6]
   SC --> S3[(S3)]
@@ -257,7 +257,7 @@ flowchart TB
   subgraph CORP["Corp cluster"]
     subgraph PORTAL["ns: loadtest"]
       FE[frontend]
-      API[core-api]
+      API[constructor]
       AN[analyzer]
     end
 
@@ -290,7 +290,7 @@ flowchart TB
 timeline
   title Roadmap платформы
   section Сейчас
-    Модуль 1 : UI · Scenario · JMX/k6 · LDAP · k8s Helm
+    Модуль 1–3 : UI · Scenario · scripts · queued runs · webhook
   section Q2
     S3 + Kafka : build.completed · scenarioRef
     k6 Job POC : ручной запуск из артефакта
@@ -306,7 +306,9 @@ timeline
 
 ## Резюме
 
-**Сейчас:** модуль 1 готовит `Scenario` и производные `.jmx`/`.js`, хранит метаданные в PostgreSQL, деплоится в k8s через Helm.
+**Сейчас:** модули 1–3 — подготовка `Scenario`, артефакты в `scripts`/`build_records`,
+создание `test_runs` (queued; trigger GitLab — следующий шаг), webhook статусов.
+Локально — docker-compose; деплой в k8s — вне этого репозитория (без Helm-chart в дереве).
 
 **Цель:** `Scenario` и артефакты → **S3**, событие **`build.completed`** → **Kafka** → **Argo Workflows** поднимает **namespace per run** (SUT + WireMock/Toxiproxy), **TestRun CRD** запускает **k6-operator** (основной) или **JMeter** (legacy), метрики идут в **Prometheus + Loki**, модуль 4 сравнивает с **baseline N-1** и связывает **readiness score** с фактом, модуль 5 формирует отчёт.
 
@@ -321,5 +323,6 @@ Mermaid-диаграммы рендерятся в:
 
 Связанные документы:
 - [`platform-roadmap.md`](platform-roadmap.md)
-- [`deploy/k8s.md`](deploy/k8s.md)
+- [`config/consul-vault-config.yaml`](../config/consul-vault-config.yaml) — адреса / Consul / Vault
+- [`README.md`](../README.md) — same-origin frontend, bootstrap-admin, Liquibase init-job
 - [`domain-model.md`](domain-model.md)

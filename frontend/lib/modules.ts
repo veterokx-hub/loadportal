@@ -36,7 +36,7 @@ export const APP_MODULES: AppModule[] = [
     id: "environment",
     nav: "Стенд",
     title: "Стенд",
-    blurb: "Объект теста и заглушки: развернуть, проверить, получить baseUrl",
+    blurb: "Развернуть объект теста и получить baseUrl",
     available: false,
     preview: [
       "Развёртывание тестируемого сервиса в изолированном namespace",
@@ -49,20 +49,15 @@ export const APP_MODULES: AppModule[] = [
     id: "run",
     nav: "Запуск",
     title: "Запуск теста",
-    blurb: "Генератор нагрузки: профиль, движок, старт и мониторинг прогона",
-    available: false,
-    preview: [
-      "Выбор сценария и стенда",
-      "k6-operator или JMeter в Kubernetes",
-      "Профиль нагрузки и AutoStop",
-      "Статус прогона в реальном времени",
-    ],
+    blurb: "Сборка или скрипт → Jira → карточка прогона (GitLab CI — далее)",
+    available: true,
+    preview: [],
   },
   {
     id: "analysis",
     nav: "Анализ",
     title: "Анализ результатов",
-    blurb: "Метрики, сравнение с baseline, узкие места и рекомендации",
+    blurb: "Метрики прогона, аномалии и рекомендации",
     available: false,
     preview: [
       "RPS, latency (p95/p99), ошибки из Prometheus",

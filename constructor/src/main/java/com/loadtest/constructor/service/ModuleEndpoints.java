@@ -2,69 +2,77 @@ package com.loadtest.constructor.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.loadtest.constructor.persistence.PortalSettingsEntity;
+import com.loadtest.constructor.config.DiscoveryConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import java.net.http.HttpClient;
-
 /**
  * Резолв URL зависимостей constructor.
- * Приоритет: (1) override из настроек портала → (2) Consul KV/Catalog → (3) env/localhost defaults.
+ * Приоритет: (1) modules.* из consul-vault-config → (2) Consul KV/Catalog → (3) env defaults.
  */
 @Service
 public class ModuleEndpoints {
 
     private static final Logger log = LoggerFactory.getLogger(ModuleEndpoints.class);
 
-    private final PortalSettingsService settingsService;
+    private final DiscoveryConfig discovery;
     private final ObjectMapper objectMapper;
-    private final RestClient.Builder restClientBuilder;
+    private final RestClient restClient;
 
     private final String defaultAnalyzer;
     private final String defaultK6;
     private final String defaultJmeter;
 
+    /**
+     * Используется probe-клиент с короткими таймаутами: резолв вызывается перед каждой сборкой,
+     * и недоступный Consul должен быстро уступить место значениям по умолчанию, а не задерживать
+     * пользовательский запрос.
+     */
     public ModuleEndpoints(
-            PortalSettingsService settingsService,
+            DiscoveryConfig discovery,
             ObjectMapper objectMapper,
+            @Qualifier("probeRestClient") RestClient restClient,
             @Value("${analyzer.base-url:http://localhost:8000}") String defaultAnalyzer,
             @Value("${k6-generator.base-url:http://localhost:8001}") String defaultK6,
             @Value("${jmeter-builder.base-url:http://localhost:8081}") String defaultJmeter) {
-        this.settingsService = settingsService;
+        this.discovery = discovery;
         this.objectMapper = objectMapper;
+        this.restClient = restClient;
         this.defaultAnalyzer = defaultAnalyzer;
         this.defaultK6 = defaultK6;
         this.defaultJmeter = defaultJmeter;
-        HttpClient httpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
-        this.restClientBuilder = RestClient.builder()
-                .requestFactory(new JdkClientHttpRequestFactory(httpClient));
     }
 
     public String analyzerBaseUrl() {
-        return resolve("analyzer", settingsService.loadEntity().getAnalyzerUrl(), defaultAnalyzer);
+        return resolve("analyzer", discovery.getModules().getAnalyzerUrl(), defaultAnalyzer);
     }
 
     public String k6GeneratorBaseUrl() {
-        return resolve("k6-generator", settingsService.loadEntity().getK6GeneratorUrl(), defaultK6);
+        return resolve("k6-generator", discovery.getModules().getK6GeneratorUrl(), defaultK6);
     }
 
     public String jmeterBuilderBaseUrl() {
-        return resolve("jmeter-builder", settingsService.loadEntity().getJmeterBuilderUrl(), defaultJmeter);
+        return resolve("jmeter-builder", discovery.getModules().getJmeterBuilderUrl(), defaultJmeter);
+    }
+
+    /** Пусто = same-origin (браузер ходит на /api через Ingress). */
+    public String frontendApiBaseUrl() {
+        String v = discovery.getModules().getFrontendApiBaseUrl();
+        return v == null ? "" : v.trim();
     }
 
     private String resolve(String serviceKey, String override, String fallback) {
         if (override != null && !override.isBlank()) {
             return trimSlash(override.trim());
         }
-        PortalSettingsEntity s = settingsService.loadEntity();
-        if (s.isConsulEnabled()) {
+        DiscoveryConfig.Consul consul = discovery.getConsul();
+        if (consul.isEnabled()) {
             try {
-                String fromConsul = resolveFromConsul(s, serviceKey);
+                String fromConsul = resolveFromConsul(consul, serviceKey);
                 if (fromConsul != null && !fromConsul.isBlank()) {
                     return trimSlash(fromConsul);
                 }
@@ -75,37 +83,38 @@ public class ModuleEndpoints {
         return trimSlash(fallback);
     }
 
-    private String resolveFromConsul(PortalSettingsEntity s, String serviceKey) throws Exception {
-        String host = blankTo(s.getConsulHost(), "localhost");
-        int port = s.getConsulPort() > 0 ? s.getConsulPort() : 8500;
-        String prefix = blankTo(s.getConsulKvPrefix(), "loadtest/");
+    private String resolveFromConsul(DiscoveryConfig.Consul consul, String serviceKey) throws Exception {
+        String host = blankTo(consul.getHost(), "localhost");
+        int port = consul.getPort() > 0 ? consul.getPort() : 8500;
+        String prefix = blankTo(consul.getKvPrefix(), "loadtest/");
         if (!prefix.endsWith("/")) prefix = prefix + "/";
 
-        RestClient consul = restClientBuilder.baseUrl("http://" + host + ":" + port).build();
+        String consulBase = "http://" + host + ":" + port;
 
-        // 1) KV: loadtest/services/{serviceKey}/url
-        String kvPath = "/v1/kv/" + prefix + "services/" + serviceKey + "/url?raw";
+        // Сначала явно прописанный KV-ключ, затем — регистрация сервиса в каталоге.
+        String kvPath = consulBase + "/v1/kv/" + prefix + "services/" + serviceKey + "/url?raw";
         try {
-            String raw = consul.get().uri(kvPath).retrieve().body(String.class);
+            String raw = restClient.get().uri(kvPath).retrieve().body(String.class);
             if (raw != null && !raw.isBlank()) {
                 return raw.trim();
             }
         } catch (Exception ignored) {
-            // fall through to catalog
+            // Ключа нет или Consul недоступен — пробуем каталог.
         }
 
-        // 2) Catalog by service name
         String serviceName = switch (serviceKey) {
-            case "analyzer" -> blankTo(s.getConsulServiceAnalyzer(), "loadtest-analyzer");
-            case "k6-generator" -> blankTo(s.getConsulServiceK6(), "loadtest-k6-generator");
-            case "jmeter-builder" -> blankTo(s.getConsulServiceJmeter(), "loadtest-jmeter-builder");
+            case "analyzer" -> blankTo(consul.getServiceAnalyzer(), "loadtest-analyzer");
+            case "k6-generator" -> blankTo(consul.getServiceK6(), "loadtest-k6-generator");
+            case "jmeter-builder" -> blankTo(consul.getServiceJmeter(), "loadtest-jmeter-builder");
+            case "constructor" -> blankTo(consul.getServiceConstructor(), "loadtest-constructor");
+            case "frontend" -> blankTo(consul.getServiceFrontend(), "loadtest-frontend");
             default -> "loadtest-" + serviceKey;
         };
-        String catalogPath = "/v1/catalog/service/" + serviceName;
-        if (s.getConsulDatacenter() != null && !s.getConsulDatacenter().isBlank()) {
-            catalogPath += "?dc=" + s.getConsulDatacenter().trim();
+        String catalogPath = consulBase + "/v1/catalog/service/" + serviceName;
+        if (consul.getDatacenter() != null && !consul.getDatacenter().isBlank()) {
+            catalogPath += "?dc=" + consul.getDatacenter().trim();
         }
-        String body = consul.get().uri(catalogPath).retrieve().body(String.class);
+        String body = restClient.get().uri(catalogPath).retrieve().body(String.class);
         if (body == null || body.isBlank() || "[]".equals(body.trim())) {
             return null;
         }
@@ -125,15 +134,15 @@ public class ModuleEndpoints {
         return "http://" + address + ":" + svcPort;
     }
 
-    /** Проверка доступности Consul (для UI). */
+    /** Доступен ли Consul — показывается в /ready, на резолв адресов не влияет. */
     public boolean pingConsul() {
-        PortalSettingsEntity s = settingsService.loadEntity();
-        if (!s.isConsulEnabled()) return false;
-        String host = blankTo(s.getConsulHost(), "localhost");
-        int port = s.getConsulPort() > 0 ? s.getConsulPort() : 8500;
+        DiscoveryConfig.Consul consul = discovery.getConsul();
+        if (!consul.isEnabled()) return false;
+        String host = blankTo(consul.getHost(), "localhost");
+        int port = consul.getPort() > 0 ? consul.getPort() : 8500;
         try {
-            String body = restClientBuilder.baseUrl("http://" + host + ":" + port).build()
-                    .get().uri("/v1/status/leader")
+            String body = restClient.get()
+                    .uri("http://" + host + ":" + port + "/v1/status/leader")
                     .retrieve()
                     .body(String.class);
             return body != null && !body.isBlank();
@@ -147,8 +156,11 @@ public class ModuleEndpoints {
                 analyzerBaseUrl(),
                 k6GeneratorBaseUrl(),
                 jmeterBuilderBaseUrl(),
-                settingsService.loadEntity().isConsulEnabled(),
-                pingConsul()
+                frontendApiBaseUrl(),
+                discovery.getConsul().isEnabled(),
+                pingConsul(),
+                discovery.getVault().isEnabled(),
+                blankTo(discovery.getVault().getAddress(), "")
         );
     }
 
@@ -156,8 +168,11 @@ public class ModuleEndpoints {
             String analyzerUrl,
             String k6GeneratorUrl,
             String jmeterBuilderUrl,
+            String frontendApiBaseUrl,
             boolean consulEnabled,
-            boolean consulReachable
+            boolean consulReachable,
+            boolean vaultEnabled,
+            String vaultAddress
     ) {
     }
 

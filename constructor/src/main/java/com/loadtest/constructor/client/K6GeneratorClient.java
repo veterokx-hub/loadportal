@@ -3,28 +3,29 @@ package com.loadtest.constructor.client;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.loadtest.constructor.model.Scenario;
 import com.loadtest.constructor.service.ModuleEndpoints;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
-import java.net.http.HttpClient;
-
+/** Клиент модуля k6-generator: сборка .js (или zip с CSV-датасетами). */
 @Component
 public class K6GeneratorClient {
 
     private final ModuleEndpoints endpoints;
     private final ObjectMapper objectMapper;
-    private final RestClient.Builder restClientBuilder;
+    private final RestClient restClient;
 
-    public K6GeneratorClient(ModuleEndpoints endpoints, ObjectMapper objectMapper) {
+    /** RestClient общий на приложение (см. HttpClientConfig) — пул соединений переиспользуется. */
+    public K6GeneratorClient(
+            ModuleEndpoints endpoints,
+            ObjectMapper objectMapper,
+            @Qualifier("sharedRestClient") RestClient restClient) {
         this.endpoints = endpoints;
         this.objectMapper = objectMapper;
-        HttpClient httpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
-        this.restClientBuilder = RestClient.builder()
-                .requestFactory(new JdkClientHttpRequestFactory(httpClient));
+        this.restClient = restClient;
     }
 
     public BinaryResult generateK6(Scenario scenario) {
@@ -35,16 +36,14 @@ public class K6GeneratorClient {
             throw new IllegalStateException("Не удалось сериализовать сценарий для k6-generator", e);
         }
 
-        ResponseEntity<byte[]> resp = restClientBuilder
-                .baseUrl(endpoints.k6GeneratorBaseUrl())
-                .build()
-                .post()
-                .uri("/generate/k6")
+        ResponseEntity<byte[]> resp = restClient.post()
+                .uri(endpoints.k6GeneratorBaseUrl() + "/generate/k6")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(json)
                 .retrieve()
                 .toEntity(byte[].class);
 
+        // Тип и имя файла определяет генератор: одиночный .js или zip, если есть датасеты.
         MediaType ct = resp.getHeaders().getContentType();
         String cd = resp.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION);
         return new BinaryResult(
@@ -53,6 +52,7 @@ public class K6GeneratorClient {
                 cd != null ? cd : "attachment; filename=\"scenario.js\"");
     }
 
+    /** Артефакт вместе с заголовками, под которыми его отдаст constructor. */
     public record BinaryResult(byte[] body, String contentType, String contentDisposition) {
     }
 }

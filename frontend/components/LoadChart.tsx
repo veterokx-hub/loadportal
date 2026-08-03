@@ -75,6 +75,8 @@ function fluidPath(pts: { x: number; y: number }[]): string {
   return d;
 }
 
+const TOTAL_LABEL = "Суммарная интенсивность";
+
 export function LoadChart({ series }: { series: Series[] }) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [isolated, setIsolated] = useState<string | null>(null);
@@ -357,5 +359,3 @@ export const CHART_COLORS = [
   "#37e6a8",
   "#ffb454",
 ];
-
-export const TOTAL_LABEL = "Суммарная интенсивность";

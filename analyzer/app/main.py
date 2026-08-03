@@ -8,54 +8,103 @@
 from __future__ import annotations
 
 import os
+import time
+from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from .metrics import ANALYZE_DURATION, ANALYZE_TOTAL, FETCH_DURATION, REQUESTS_IN_DRAFT
 from .models import AnalyzeRequest, ScenarioDraft, SourceType
 from .openapi_parser import parse_openapi
 from .postman_parser import parse_postman
 
-app = FastAPI(title="Load Test Portal — Analyzer", version="0.1.0")
+# Состояние приложения: один AsyncClient на весь процесс.
+# Создавать клиент на каждый запрос — значит поднимать новый пул TCP/TLS каждый раз;
+# при частых анализах по URL это даёт лишние рукопожатия и расход дескрипторов.
+_app_state: dict[str, httpx.AsyncClient] = {}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Поднимает общий HTTP-клиент при старте и закрывает его при остановке."""
+    # verify=False: в тестовой среде часто стоят corp CA / self-signed сертификаты.
+    _app_state["http"] = httpx.AsyncClient(
+        timeout=20.0,
+        follow_redirects=True,
+        verify=False,
+    )
+    try:
+        yield
+    finally:
+        await _app_state["http"].aclose()
+        _app_state.clear()
+
+
+app = FastAPI(
+    title="Load Test Portal — Analyzer",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+
+def _http() -> httpx.AsyncClient:
+    """Общий клиент модуля. Доступен только между стартом и остановкой приложения."""
+    client = _app_state.get("http")
+    if client is None:
+        raise RuntimeError("HTTP-клиент analyzer не инициализирован")
+    return client
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "service": "analyzer"}
+
+
+@app.get("/ready")
+def ready() -> dict[str, str]:
+    """Readiness probe (k8s). Stateless — всегда ready при поднятом процессе."""
+    return {"status": "ok", "service": "analyzer"}
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    """Экспозиция Prometheus-метрик для VictoriaMetrics."""
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.post("/analyze", response_model=ScenarioDraft)
 async def analyze(req: AnalyzeRequest) -> ScenarioDraft:
-    content = await _resolve_content(req)
+    source = req.source_type.value if isinstance(req.source_type, SourceType) else str(req.source_type)
+    started = time.perf_counter()
     try:
+        content = await _resolve_content(req)
         if req.source_type == SourceType.OPENAPI:
             draft = parse_openapi(content, name=req.name)
         elif req.source_type == SourceType.POSTMAN:
             draft = parse_postman(content, name=req.name)
         else:  # pragma: no cover
             raise HTTPException(status_code=400, detail=f"Неизвестный source_type: {req.source_type}")
+        draft = enrich(draft)
+        ANALYZE_TOTAL.labels(source_type=source, result="success").inc()
+        ANALYZE_DURATION.labels(source_type=source, result="success").observe(
+            time.perf_counter() - started
+        )
+        REQUESTS_IN_DRAFT.observe(len(draft.requests or []))
+        return draft
     except HTTPException:
+        ANALYZE_TOTAL.labels(source_type=source, result="failure").inc()
+        ANALYZE_DURATION.labels(source_type=source, result="failure").observe(
+            time.perf_counter() - started
+        )
         raise
     except Exception as exc:  # noqa: BLE001
+        ANALYZE_TOTAL.labels(source_type=source, result="failure").inc()
+        ANALYZE_DURATION.labels(source_type=source, result="failure").observe(
+            time.perf_counter() - started
+        )
         raise HTTPException(status_code=422, detail=f"Не удалось разобрать спецификацию: {exc}") from exc
-
-    return enrich(draft)
-
-
-def _tls_verify():
-    """Настройка проверки TLS для корпоративных сред.
-
-    - ANALYZER_CA_BUNDLE=/path/to/corp-ca.pem — доверять корпоративному CA (рекомендуется);
-    - ANALYZER_VERIFY_SSL=false — полностью отключить проверку (небезопасно, только для отладки).
-    По умолчанию проверка включена.
-    """
-    ca_bundle = os.getenv("ANALYZER_CA_BUNDLE")
-    if ca_bundle:
-        return ca_bundle
-    verify = os.getenv("ANALYZER_VERIFY_SSL", "true").strip().lower()
-    if verify in ("false", "0", "no", "off"):
-        return False
-    return True
 
 
 def _is_openapi_spec(text: str) -> bool:
@@ -132,71 +181,68 @@ def _spec_candidates(url: str) -> list[str]:
 
 
 async def _resolve_content(req: AnalyzeRequest) -> str:
+    """Возвращает текст спецификации: либо из тела запроса, либо скачанный по URL."""
     if req.content:
         return req.content
     if not req.url:
         raise HTTPException(status_code=400, detail="Нужно указать url или content")
 
-    verify = _tls_verify()
+    client = _http()
+    fetch_started = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, verify=verify) as client:
-
-            async def _fetch_spec(u: str, depth: int = 0) -> str | None:
-                """Возвращает текст спеки по URL, разворачивая swagger-config при необходимости."""
-                try:
-                    r = await client.get(u)
-                except httpx.HTTPError:
-                    return None
-                if r.status_code != 200:
-                    return None
-                body = r.text
-                if _is_openapi_spec(body):
-                    return body
-                if depth < 2:
-                    for cu in _swagger_config_urls(body, str(r.url)):
-                        found = await _fetch_spec(cu, depth + 1)
-                        if found:
-                            return found
+        async def _fetch_spec(u: str, depth: int = 0) -> str | None:
+            """Возвращает текст спеки по URL, разворачивая swagger-config при необходимости."""
+            try:
+                r = await client.get(u)
+            except httpx.HTTPError:
                 return None
+            if r.status_code != 200:
+                return None
+            body = r.text
+            if _is_openapi_spec(body):
+                return body
+            if depth < 2:
+                for cu in _swagger_config_urls(body, str(r.url)):
+                    found = await _fetch_spec(cu, depth + 1)
+                    if found:
+                        return found
+            return None
 
-            resp = await client.get(req.url)
-            resp.raise_for_status()
-            text = resp.text
-            if _is_openapi_spec(text):
-                return text
+        resp = await client.get(req.url)
+        resp.raise_for_status()
+        text = resp.text
+        if _is_openapi_spec(text):
+            FETCH_DURATION.labels(result="success").observe(time.perf_counter() - fetch_started)
+            return text
 
-            # req.url мог быть swagger-config — развернём ссылки
-            for cu in _swagger_config_urls(text, str(resp.url)):
-                found = await _fetch_spec(cu)
-                if found:
-                    return found
+        # req.url мог быть swagger-config — развернём ссылки
+        for cu in _swagger_config_urls(text, str(resp.url)):
+            found = await _fetch_spec(cu)
+            if found:
+                FETCH_DURATION.labels(result="success").observe(time.perf_counter() - fetch_started)
+                return found
 
-            # Иначе это страница Swagger UI — перебираем вероятные URL спеки
-            for candidate in _spec_candidates(str(resp.url)):
-                found = await _fetch_spec(candidate)
-                if found:
-                    return found
+        # Иначе это страница Swagger UI — перебираем вероятные URL спеки
+        for candidate in _spec_candidates(str(resp.url)):
+            found = await _fetch_spec(candidate)
+            if found:
+                FETCH_DURATION.labels(result="success").observe(time.perf_counter() - fetch_started)
+                return found
 
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "По ссылке пришёл HTML (страница Swagger UI), а не спецификация, "
-                    "и автопоиск спеки не удался. Укажите URL самой спеки "
-                    "(например .../v3/api-docs) или вставьте содержимое вручную."
-                ),
-            )
+        FETCH_DURATION.labels(result="failure").observe(time.perf_counter() - fetch_started)
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "По ссылке пришёл HTML (страница Swagger UI), а не спецификация, "
+                "и автопоиск спеки не удался. Укажите URL самой спеки "
+                "(например .../v3/api-docs) или вставьте содержимое вручную."
+            ),
+        )
     except httpx.ConnectError as exc:
-        if "CERTIFICATE_VERIFY_FAILED" in str(exc):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Ошибка TLS при загрузке {req.url}: самоподписанный/корпоративный сертификат. "
-                    "Задайте ANALYZER_CA_BUNDLE (путь к корпоративному CA) или "
-                    "ANALYZER_VERIFY_SSL=false для отладки."
-                ),
-            ) from exc
+        FETCH_DURATION.labels(result="failure").observe(time.perf_counter() - fetch_started)
         raise HTTPException(status_code=400, detail=f"Не удалось подключиться к {req.url}: {exc}") from exc
     except httpx.HTTPError as exc:
+        FETCH_DURATION.labels(result="failure").observe(time.perf_counter() - fetch_started)
         raise HTTPException(status_code=400, detail=f"Не удалось загрузить {req.url}: {exc}") from exc
 
 

@@ -12,4 +12,10 @@ public class HealthController {
     public Map<String, String> health() {
         return Map.of("status", "ok", "service", "jmeter-builder");
     }
+
+    /** Readiness / liveness для k8s (stateless). */
+    @GetMapping("/ready")
+    public Map<String, String> ready() {
+        return Map.of("status", "ok", "service", "jmeter-builder");
+    }
 }

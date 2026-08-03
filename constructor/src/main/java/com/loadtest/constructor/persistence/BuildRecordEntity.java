@@ -30,7 +30,6 @@ public class BuildRecordEntity {
     @Column(nullable = false)
     private String filename;
 
-    @Lob
     @Column(nullable = false, columnDefinition = "text")
     private String scenarioJson;
 

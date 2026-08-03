@@ -1,5 +1,6 @@
 package com.loadtest.constructor.service;
 
+import com.loadtest.constructor.metrics.PortalMetrics;
 import com.loadtest.constructor.model.UserRole;
 import com.loadtest.constructor.persistence.*;
 import com.loadtest.constructor.security.AuthContext;
@@ -23,16 +24,19 @@ public class AuthService {
     private final AuthSessionRepository sessionRepository;
     private final PortalSettingsRepository settingsRepository;
     private final LdapAuthService ldapAuthService;
+    private final PortalMetrics metrics;
     private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     public AuthService(UserRepository userRepository,
                        AuthSessionRepository sessionRepository,
                        PortalSettingsRepository settingsRepository,
-                       LdapAuthService ldapAuthService) {
+                       LdapAuthService ldapAuthService,
+                       PortalMetrics metrics) {
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
         this.settingsRepository = settingsRepository;
         this.ldapAuthService = ldapAuthService;
+        this.metrics = metrics;
     }
 
     @Transactional
@@ -48,28 +52,43 @@ public class AuthService {
         if (local.isPresent()) {
             UserEntity u = local.get();
             if (!u.isEnabled()) {
+                // Отключённый пользователь учитываем как failure — иначе атакующий
+                // не отличит его от неверного пароля по ответу, но метрика всё равно нужна.
+                metrics.recordLogin("local", false);
                 throw new IllegalArgumentException("Пользователь отключён");
             }
             if (u.isLdapOnly()) {
                 if (!ldapOk) {
+                    metrics.recordLogin("ldap", false);
                     throw new IllegalArgumentException("Неверный логин или пароль");
                 }
-            } else if (passwordEncoder.matches(password, u.getPasswordHash())) {
-                return createSession(u);
-            } else if (!ldapOk) {
+                return succeed("ldap", u);
+            }
+            if (passwordEncoder.matches(password, u.getPasswordHash())) {
+                return succeed("local", u);
+            }
+            if (!ldapOk) {
+                metrics.recordLogin("local", false);
                 throw new IllegalArgumentException("Неверный логин или пароль");
             }
             // LDAP успешен для локальной учётки — вход по доменному паролю
-            return createSession(u);
+            return succeed("ldap", u);
         }
 
         if (ldapOk) {
+            // Первая успешная LDAP-аутентификация создаёт локальную карточку USER.
             UserEntity created = new UserEntity(user, null, UserRole.USER, true);
             userRepository.save(created);
-            return createSession(created);
+            return succeed("ldap", created);
         }
 
+        metrics.recordLogin("unknown", false);
         throw new IllegalArgumentException("Неверный логин или пароль");
+    }
+
+    private LoginResponse succeed(String method, UserEntity user) {
+        metrics.recordLogin(method, true);
+        return createSession(user);
     }
 
     @Transactional

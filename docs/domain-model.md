@@ -15,11 +15,11 @@
   пользователь правит в UI: параметры, корреляции, интенсивность
         │
         ▼
-  core-api.build(jmeter)  ──►  .jmx        (JmxBuilder, родные библиотеки JMeter)
-  core-api.build(k6)      ──►  k6-generator ──►  .js
+  constructor ──► jmeter-builder  ──►  .jmx  ──► scripts (+ build_records)
+  constructor ──► k6-generator ──►  .js
         │
         ▼
-  история сборок (PostgreSQL, привязка к portal_users.username)
+  test_runs (queued → webhook GitLab) · run_id / script_id / test_id
 ```
 
 ## Пользователи и доступ
@@ -28,47 +28,57 @@
 |---|---|---|
 | PortalUser | `portal_users` | локальный пароль (BCrypt) или LDAP-only |
 | AuthSession | `auth_sessions` | Bearer-токен, TTL 24 ч |
-| PortalSettings | `portal_settings` | конфигурация LDAP AD (одна строка) |
+| PortalSettings | `portal_settings` | LDAP + GitLab/Grafana |
 | BuildRecord | `build_records` | снимок сценария + метаданные сборки, **scope = username** |
+| Script | `scripts` | артефакт `.jmx`/`.js` (`build_id` → `script_id`) |
+| TestRun | `test_runs` | прогон: `test_id` (Jira) + `script_id` + `run_id` |
 
-Аутентификация: `POST /api/auth/login` → token; все `/api/**` (кроме login) требуют `Authorization: Bearer`.
+Аутентификация: `POST /api/auth/login` → token; большинство `/api/**` требуют `Authorization: Bearer`.
+Исключения: login, health, webhook GitLab (`X-Gitlab-Token`).
 
 ## Сущности
 
-### Project
-| поле | тип | описание |
-|---|---|---|
-| id | UUID | |
-| name | string | |
-| createdAt | datetime | |
+### Scenario (JSON-контракт, не отдельная таблица)
+Живёт в UI и в `build_records.scenario_json`. Движок выбирается при сборке.
 
-### Scenario
 | поле | тип | описание |
 |---|---|---|
-| id | UUID | |
-| projectId | UUID | |
-| name | string | |
-| version | int | инкремент при сохранении |
+| name | string | имя сценария |
 | sourceType | enum `openapi` \| `postman` | |
 | baseUrl | string | напр. `https://api.example.com` |
-| threadGroup | ThreadGroupConfig | настройки нагрузки уровня сценария |
+| load | LoadConfig | режим теста, ступени, ожидаемая латентность |
+| datasets | Dataset[] | CSV-данные уровня сценария |
 | requests | Request[] | упорядоченный список |
-| createdAt | datetime | |
+| autostop | AutoStop | пороги автоостановки |
+| prometheus | PrometheusConfig | метки для экспорта метрик |
 
-### ThreadGroupConfig
+### LoadConfig
 | поле | тип | описание |
 |---|---|---|
-| numThreads | int | число виртуальных пользователей |
-| rampUpSec | int | время набора пользователей |
-| durationSec | int | длительность теста |
+| test_mode | enum `ramp_hold` \| `max_search` | постоянная нагрузка / поиск максимума |
+| steps | int | число ступеней (для `max_search`) |
+| stepDurationSec | int | длительность ступени |
+| assumedLatencySec | number | для оценки VU/threads |
 
-> **Важно про корреляцию.** Переменные JMeter живут в рамках потока (thread).
-> Поэтому весь сценарий собирается как **один пользовательский путь в одной Thread
-> Group**: запросы выполняются последовательно в заданном порядке, и значение,
-> извлечённое экстрактором из ответа запроса A, доступно последующим запросам.
-> Интенсивность отдельного запроса задаётся **Constant Throughput Timer** на самом
-> сэмплере (scope = this sampler), число потоков в группе должно покрывать
-> максимальный требуемый RPS.
+> **Корреляция.** Переменные JMeter живут в рамках потока. Сценарий собирается как
+> один пользовательский путь: запросы подряд, экстрактор A → параметр B.
+> Интенсивность — через Throughput Shaping / CTT на сэмплерах; число потоков
+> покрывает максимальный требуемый RPS (из `assumedLatencySec`).
+
+### Dataset
+| поле | тип | описание |
+|---|---|---|
+| id, name, fileName | string | |
+| columns | string[] | |
+| rows | string[][] | инлайн-данные |
+| random | bool | случайный порядок строк |
+
+### AutoStop
+| поле | тип | описание |
+|---|---|---|
+| enabled | bool | |
+| errorRatePct / errorRateSec | | доля ошибок за окно |
+| avgResponseMs / avgResponseSec | | средний отклик за окно |
 
 ### Request
 | поле | тип | описание |
@@ -84,7 +94,7 @@
 | params | Param[] | все параметризуемые значения (path/query/header/body) |
 | extractions | Extraction[] | корреляция-источник: что достать из ОТВЕТА этого запроса |
 | intensity | Intensity | целевая нагрузка на этот запрос |
-
+| validation | Validation? | assertions / checks |
 ### Body
 | поле | тип |
 |---|---|

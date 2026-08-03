@@ -6,28 +6,32 @@ import com.loadtest.constructor.service.ModuleEndpoints;
 import com.loadtest.constructor.web.dto.AnalyzeRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
-import java.net.http.HttpClient;
-
+/** Клиент модуля analyzer: разбор OpenAPI/Postman в черновик сценария. */
 @Component
 public class AnalyzerClient {
 
     private static final Logger log = LoggerFactory.getLogger(AnalyzerClient.class);
 
+    /** Обрезка тела в логе: спека может весить мегабайты. */
+    private static final int LOG_BODY_LIMIT = 300;
+
     private final ModuleEndpoints endpoints;
     private final ObjectMapper objectMapper;
-    private final RestClient.Builder restClientBuilder;
+    private final RestClient restClient;
 
-    public AnalyzerClient(ModuleEndpoints endpoints, ObjectMapper objectMapper) {
+    /** RestClient общий на приложение (см. HttpClientConfig) — пул соединений переиспользуется. */
+    public AnalyzerClient(
+            ModuleEndpoints endpoints,
+            ObjectMapper objectMapper,
+            @Qualifier("sharedRestClient") RestClient restClient) {
         this.endpoints = endpoints;
         this.objectMapper = objectMapper;
-        HttpClient httpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
-        this.restClientBuilder = RestClient.builder()
-                .requestFactory(new JdkClientHttpRequestFactory(httpClient));
+        this.restClient = restClient;
     }
 
     public Scenario analyze(AnalyzeRequest request) {
@@ -37,13 +41,13 @@ public class AnalyzerClient {
         } catch (Exception e) {
             throw new IllegalStateException("Не удалось сериализовать запрос к analyzer", e);
         }
-        log.info("Analyzer request body: {}", json.length() > 300 ? json.substring(0, 300) + "..." : json);
+        log.info("Analyzer request body: {}",
+                json.length() > LOG_BODY_LIMIT ? json.substring(0, LOG_BODY_LIMIT) + "..." : json);
 
-        String responseBody = restClientBuilder
-                .baseUrl(endpoints.analyzerBaseUrl())
-                .build()
-                .post()
-                .uri("/analyze")
+        // Адрес резолвится на каждый вызов (Consul/настройки могут измениться без рестарта),
+        // но соединение берётся из общего пула.
+        String responseBody = restClient.post()
+                .uri(endpoints.analyzerBaseUrl() + "/analyze")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(json)
                 .retrieve()
