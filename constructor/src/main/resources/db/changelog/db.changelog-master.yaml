@@ -223,3 +223,16 @@ databaseChangeLog:
       changes:
         - dropTable:
             tableName: projects
+
+  - changeSet:
+      id: 6-gitlab-tokens-and-repository
+      author: loadtest-portal
+      comment: Store GitLab tokens/repo in settings (Vault later); ref fixed to master in code
+      changes:
+        - addColumn:
+            tableName: portal_settings
+            columns:
+              - column: { name: gitlab_repository, type: varchar(256), defaultValue: "lt-ump" }
+              - column: { name: gitlab_trigger_token, type: varchar(512), defaultValue: "" }
+              - column: { name: gitlab_upload_token, type: varchar(512), defaultValue: "" }
+              - column: { name: gitlab_webhook_secret, type: varchar(512), defaultValue: "" }

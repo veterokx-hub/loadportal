@@ -2,11 +2,13 @@ package com.loadtest.constructor.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.loadtest.constructor.client.GitLabClient;
 import com.loadtest.constructor.metrics.PortalMetrics;
 import com.loadtest.constructor.model.TestRunStatus;
 import com.loadtest.constructor.persistence.BuildRecordEntity;
 import com.loadtest.constructor.persistence.BuildRecordRepository;
 import com.loadtest.constructor.persistence.PortalSettingsEntity;
+import com.loadtest.constructor.persistence.ScriptEntity;
 import com.loadtest.constructor.persistence.TestRunEntity;
 import com.loadtest.constructor.persistence.TestRunRepository;
 import com.loadtest.constructor.security.AuthContext;
@@ -23,19 +25,21 @@ import java.time.Instant;
 import java.util.*;
 
 /**
- * Жизненный цикл прогона: создание (queued) → обновление статуса из GitLab webhook.
- * Вызов GitLab Trigger пока не подключён — метрика created растёт без status=running.
+ * Жизненный цикл прогона: заливка скрипта в Git → trigger pipeline → статусы из webhook.
  */
 @Service
 public class TestRunService {
 
     private static final Logger log = LoggerFactory.getLogger(TestRunService.class);
+    private static final String DEFAULT_CPU = "500m";
+    private static final String DEFAULT_MEMORY = "2Gi";
 
     private final TestRunRepository testRunRepository;
     private final BuildRecordRepository buildRecordRepository;
     private final PortalSettingsService portalSettingsService;
     private final GitLabSettingsService gitLabSettingsService;
     private final ScriptService scriptService;
+    private final GitLabClient gitLabClient;
     private final ObjectMapper objectMapper;
     private final PortalMetrics metrics;
 
@@ -45,6 +49,7 @@ public class TestRunService {
             PortalSettingsService portalSettingsService,
             GitLabSettingsService gitLabSettingsService,
             ScriptService scriptService,
+            GitLabClient gitLabClient,
             ObjectMapper objectMapper,
             PortalMetrics metrics) {
         this.testRunRepository = testRunRepository;
@@ -52,6 +57,7 @@ public class TestRunService {
         this.portalSettingsService = portalSettingsService;
         this.gitLabSettingsService = gitLabSettingsService;
         this.scriptService = scriptService;
+        this.gitLabClient = gitLabClient;
         this.objectMapper = objectMapper;
         this.metrics = metrics;
     }
@@ -89,11 +95,36 @@ public class TestRunService {
                 scriptId = linked.getId();
             }
         }
-        if (scriptId != null) {
-            scriptService.requireOwned(scriptId, ctx.username());
+        if (scriptId == null) {
+            throw new IllegalArgumentException(
+                    "Нет сохранённого скрипта для запуска — сохраните сборку или загрузите файл");
         }
+        ScriptEntity script = scriptService.requireContent(scriptId, ctx.username());
 
-        String paramsJson = writeJson(req.params() == null ? Map.of() : req.params());
+        String testId = req.testId().trim();
+        String filename = script.getFilename();
+        String podName = firstNonBlank(req.podName(), stripPath(filename));
+        String scenarioPath = firstNonBlank(req.scenarioPath(), "auto_lt/" + testId + "/" + filename);
+        String repository = firstNonBlank(
+                req.repository(),
+                settings.getGitlabRepository(),
+                "lt-ump");
+        String cpu = firstNonBlank(req.cpu(), DEFAULT_CPU);
+        String memory = firstNonBlank(req.memory(), DEFAULT_MEMORY);
+        String startTime = requireTime(req.startTime(), "start_time");
+        String endTime = requireTime(req.endTime(), "end_time");
+
+        Map<String, Object> params = new LinkedHashMap<>(req.params() == null ? Map.of() : req.params());
+        params.put("cpu", cpu);
+        params.put("memory", memory);
+        params.put("start_time", startTime);
+        params.put("end_time", endTime);
+        params.put("scenario_path", scenarioPath);
+        params.put("pod_name", podName);
+        params.put("repository", repository);
+        params.put("replicas", "1");
+
+        String paramsJson = writeJson(params);
         String labelsJson = writeJson(req.labels() == null ? Map.of() : req.labels());
 
         TestRunEntity run = new TestRunEntity(
@@ -102,13 +133,12 @@ public class TestRunService {
                 engine,
                 buildId,
                 scriptId,
-                req.testId().trim(),
+                testId,
                 targetUrl,
                 paramsJson,
                 labelsJson);
         run.setGrafanaUrl(buildGrafanaUrl(settings, run));
         appendEvent(run, "created", "Прогон создан (test_id=" + run.getTestId() + ")");
-        appendEvent(run, "queued", "Ожидает вызова GitLab CI");
         testRunRepository.save(run);
         metrics.recordRunCreated(engine);
         metrics.recordRunStatus(TestRunStatus.QUEUED);
@@ -116,7 +146,88 @@ public class TestRunService {
         MDC.put("run_id", run.getId().toString());
         log.info("Created test run {} test_id={} script_id={} build_id={}",
                 run.getId(), run.getTestId(), scriptId, buildId);
+
+        try {
+            uploadAndTrigger(settings, run, script, scenarioPath, podName, repository, cpu, memory,
+                    startTime, endTime);
+        } catch (RuntimeException ex) {
+            run.setStatus(TestRunStatus.FAILED);
+            run.setErrorMessage(truncate(ex.getMessage(), 2000));
+            run.setEndedAt(Instant.now());
+            appendEvent(run, "error", run.getErrorMessage());
+            testRunRepository.save(run);
+            metrics.recordRunStatus(TestRunStatus.FAILED);
+            log.warn("Run {} failed to start: {}", run.getId(), ex.getMessage());
+        }
+
         return toDto(run);
+    }
+
+    private void uploadAndTrigger(
+            PortalSettingsEntity settings,
+            TestRunEntity run,
+            ScriptEntity script,
+            String scenarioPath,
+            String podName,
+            String repository,
+            String cpu,
+            String memory,
+            String startTime,
+            String endTime) {
+        if (settings.getGitlabBaseUrl() == null || settings.getGitlabBaseUrl().isBlank()) {
+            throw new IllegalArgumentException("GitLab base URL не настроен");
+        }
+        if (settings.getGitlabProjectId() == null || settings.getGitlabProjectId().isBlank()) {
+            throw new IllegalArgumentException("GitLab project ID не настроен");
+        }
+        String uploadToken = gitLabSettingsService.resolveUploadToken(settings)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Upload token не задан (настройки или GITLAB_UPLOAD_TOKEN)"));
+        String triggerToken = gitLabSettingsService.resolveTriggerToken(settings)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Trigger token не задан (настройки или GITLAB_TRIGGER_TOKEN)"));
+
+        String commitMsg = "portal: " + run.getTestId() + " " + scenarioPath;
+        gitLabClient.upsertFile(
+                settings.getGitlabBaseUrl(),
+                uploadToken,
+                settings.getGitlabProjectId(),
+                scenarioPath,
+                script.getContent(),
+                commitMsg);
+        appendEvent(run, "uploaded", "Скрипт залит в " + scenarioPath);
+        log.info("Uploaded script for run {} path={}", run.getId(), scenarioPath);
+
+        Map<String, String> vars = new LinkedHashMap<>();
+        vars.put("REPOSITORY", repository);
+        vars.put("RUN_ID", run.getTestId());
+        vars.put("TOOL", run.getEngine());
+        vars.put("SCENARIO_PATH", scenarioPath);
+        vars.put("POD_NAME", podName);
+        vars.put("REPLICAS", "1");
+        vars.put("CPU", cpu);
+        vars.put("MEMORY", memory);
+        vars.put("START_TIME", startTime);
+        vars.put("END_TIME", endTime);
+        // Помогает связать webhook с прогоном, если pipeline variables доступны.
+        vars.put("PORTAL_RUN_ID", run.getId().toString());
+
+        GitLabClient.TriggerResult trigger = gitLabClient.triggerPipeline(
+                settings.getGitlabBaseUrl(),
+                settings.getGitlabProjectId(),
+                triggerToken,
+                vars);
+        run.setGitlabPipelineId(trigger.pipelineId());
+        run.setGitlabWebUrl(trigger.webUrl());
+        run.setStatus(TestRunStatus.fromGitLab(trigger.status()));
+        if (run.getStatus() == TestRunStatus.RUNNING) {
+            run.setStartedAt(Instant.now());
+        }
+        appendEvent(run, "triggered",
+                "Pipeline #" + trigger.pipelineId() + " (" + trigger.status() + ")");
+        testRunRepository.save(run);
+        metrics.recordRunStatus(run.getStatus());
+        log.info("Triggered pipeline {} for run {}", trigger.pipelineId(), run.getId());
     }
 
     @Transactional
@@ -139,7 +250,6 @@ public class TestRunService {
 
         TestRunStatus newStatus = TestRunStatus.fromGitLab(gitlabStatus);
         if (run.getStatus() == newStatus && Objects.equals(run.getGitlabWebUrl(), webUrl)) {
-            // Повторный вебхук с тем же статусом — считаем принятым, но статус не дублируем.
             metrics.recordGitLabWebhook("accepted");
             return;
         }
@@ -179,6 +289,12 @@ public class TestRunService {
         boolean hasScript = req.scriptId() != null && !req.scriptId().isBlank();
         if (!hasBuild && !hasScript) {
             throw new IllegalArgumentException("Выберите сборку или загрузите скрипт");
+        }
+        if (req.startTime() == null || req.startTime().isBlank()) {
+            throw new IllegalArgumentException("Укажите start_time");
+        }
+        if (req.endTime() == null || req.endTime().isBlank()) {
+            throw new IllegalArgumentException("Укажите end_time");
         }
     }
 
@@ -353,5 +469,39 @@ public class TestRunService {
         return status == TestRunStatus.SUCCEEDED
                 || status == TestRunStatus.FAILED
                 || status == TestRunStatus.CANCELED;
+    }
+
+    private static String requireTime(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("Укажите " + field);
+        }
+        return value.trim();
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String v : values) {
+            if (v != null && !v.isBlank()) {
+                return v.trim();
+            }
+        }
+        return "";
+    }
+
+    private static String stripPath(String filename) {
+        if (filename == null) {
+            return "script";
+        }
+        int slash = Math.max(filename.lastIndexOf('/'), filename.lastIndexOf('\\'));
+        return slash >= 0 ? filename.substring(slash + 1) : filename;
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) {
+            return "";
+        }
+        return s.length() <= max ? s : s.substring(0, max);
     }
 }

@@ -125,7 +125,10 @@ public class BuildController {
 
     private String safeName(String name) {
         if (name == null || name.isBlank()) return "scenario";
-        return name.replaceAll("[^a-zA-Z0-9_.-]", "_");
+        String cleaned = name.replaceAll("[^a-zA-Z0-9_.-]", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_|_$", "");
+        return cleaned.isBlank() ? "scenario" : cleaned;
     }
 
     private record GeneratedArtifact(String filename, byte[] body, String contentType, String contentDisposition) {

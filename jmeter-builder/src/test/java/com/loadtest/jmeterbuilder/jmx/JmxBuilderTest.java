@@ -88,9 +88,10 @@ class JmxBuilderTest {
         // валидация: код + regex
         assertTrue(jmx.contains("Assertion.response_code"));
         assertTrue(jmx.contains("Assertion.response_data"));
-        // CSV Data Set присутствует
+        // CSV Data Set присутствует; первая строка файла — заголовок
         assertTrue(jmx.contains("CSVDataSet"));
         assertTrue(jmx.contains("auth.csv"));
+        assertTrue(jmx.contains("<boolProp name=\"ignoreFirstLine\">true</boolProp>"));
         // корреляция сохранена
         assertTrue(jmx.contains("Bearer ${authToken}"));
         assertTrue(jmx.contains("${__UUID()}"));

@@ -2,6 +2,7 @@ package com.loadtest.constructor.web;
 
 import com.loadtest.constructor.config.AuthInterceptor;
 import com.loadtest.constructor.service.GitLabSettingsService;
+import com.loadtest.constructor.web.dto.GitLabRunDefaultsDto;
 import com.loadtest.constructor.web.dto.GitLabSettingsDto;
 import com.loadtest.constructor.web.dto.GitLabTestConnectionResult;
 import jakarta.servlet.http.HttpServletRequest;
@@ -21,6 +22,12 @@ public class GitLabSettingsController {
     public GitLabSettingsDto getGitLab(HttpServletRequest request) {
         AuthInterceptor.requireAdmin(request);
         return gitLabSettingsService.getGitLab();
+    }
+
+    @GetMapping("/defaults")
+    public GitLabRunDefaultsDto getDefaults(HttpServletRequest request) {
+        AuthInterceptor.requireAuth(request);
+        return gitLabSettingsService.getRunDefaults();
     }
 
     @PutMapping

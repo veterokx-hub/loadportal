@@ -396,7 +396,8 @@ def _dataset_decl(ds: Dataset) -> tuple[str, GeneratedFile | None]:
             f"}});"
         )
         return decl, None
-    # внешний CSV с заголовком
+    # Внешний CSV: первая строка — заголовки колонок (как в портале и JMeter ignoreFirstLine=true).
+    # papaparse header:true читает имена колонок из первой строки, данные — со второй.
     fname = ds.file_name or f"{name}.csv"
     lines = [",".join(_csv_escape(c) for c in cols)]
     for row in ds.rows:

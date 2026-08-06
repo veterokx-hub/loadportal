@@ -30,11 +30,10 @@ const EMPTY_LDAP: LdapSettings = {
 const EMPTY_GITLAB: GitLabSettings = {
   gitlab_base_url: "https://gitlab.corp.local",
   gitlab_project_id: "",
-  gitlab_trigger_ref: "main",
-  gitlab_jmeter_variable: "LOADTEST_ENGINE=jmeter",
-  gitlab_k6_variable: "LOADTEST_ENGINE=k6",
-  gitlab_trigger_token_vault_path: "loadtest/gitlab/trigger-token",
-  gitlab_webhook_secret_vault_path: "loadtest/gitlab/webhook-secret",
+  gitlab_repository: "lt-ump",
+  gitlab_trigger_token: "",
+  gitlab_upload_token: "",
+  gitlab_webhook_secret: "",
   grafana_base_url: "",
   grafana_dashboard_template: "/d/loadtest?var-run_id={run_id}&from={from}&to={to}",
 };
@@ -445,9 +444,11 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
           <section>
             <h3>GitLab CI и Grafana</h3>
             <p className="hint">
-              Trigger token и webhook secret хранятся только в Vault. Локально — env{" "}
-              <code>GITLAB_TRIGGER_TOKEN</code>, <code>GITLAB_WEBHOOK_SECRET</code>.
-              Webhook URL: <code>/api/runs/webhook/gitlab</code> (заголовок X-Gitlab-Token).
+              Pipeline всегда запускается на ветке <code>master</code>. Токены пока хранятся в
+              настройках (позже — Vault); локально можно задать env{" "}
+              <code>GITLAB_TRIGGER_TOKEN</code>, <code>GITLAB_UPLOAD_TOKEN</code>,{" "}
+              <code>GITLAB_WEBHOOK_SECRET</code>. Webhook:{" "}
+              <code>/api/runs/webhook/gitlab</code> (заголовок X-Gitlab-Token).
             </p>
             <div className="field">
               <label>GitLab base URL</label>
@@ -467,50 +468,42 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
                 />
               </div>
               <div className="field">
-                <label>Trigger ref (ветка/tag)</label>
+                <label>Репозиторий по умолчанию (REPOSITORY)</label>
                 <input
-                  value={gitlab.gitlab_trigger_ref}
-                  onChange={(e) => setGitlab({ ...gitlab, gitlab_trigger_ref: e.target.value })}
+                  value={gitlab.gitlab_repository}
+                  onChange={(e) => setGitlab({ ...gitlab, gitlab_repository: e.target.value })}
+                  placeholder="lt-ump"
                 />
               </div>
             </div>
-            <div className="row">
-              <div className="field">
-                <label>Переменная для JMeter</label>
-                <input
-                  value={gitlab.gitlab_jmeter_variable}
-                  onChange={(e) =>
-                    setGitlab({ ...gitlab, gitlab_jmeter_variable: e.target.value })
-                  }
-                />
-              </div>
-              <div className="field">
-                <label>Переменная для k6</label>
-                <input
-                  value={gitlab.gitlab_k6_variable}
-                  onChange={(e) => setGitlab({ ...gitlab, gitlab_k6_variable: e.target.value })}
-                />
-              </div>
+            <div className="field">
+              <label>Токен запуска теста (trigger token)</label>
+              <input
+                type="password"
+                autoComplete="off"
+                value={gitlab.gitlab_trigger_token}
+                onChange={(e) => setGitlab({ ...gitlab, gitlab_trigger_token: e.target.value })}
+                placeholder="glptt-…"
+              />
             </div>
-            <div className="row">
-              <div className="field">
-                <label>Vault path — trigger token</label>
-                <input
-                  value={gitlab.gitlab_trigger_token_vault_path}
-                  onChange={(e) =>
-                    setGitlab({ ...gitlab, gitlab_trigger_token_vault_path: e.target.value })
-                  }
-                />
-              </div>
-              <div className="field">
-                <label>Vault path — webhook secret</label>
-                <input
-                  value={gitlab.gitlab_webhook_secret_vault_path}
-                  onChange={(e) =>
-                    setGitlab({ ...gitlab, gitlab_webhook_secret_vault_path: e.target.value })
-                  }
-                />
-              </div>
+            <div className="field">
+              <label>Токен заливки скриптов (upload / commit)</label>
+              <input
+                type="password"
+                autoComplete="off"
+                value={gitlab.gitlab_upload_token}
+                onChange={(e) => setGitlab({ ...gitlab, gitlab_upload_token: e.target.value })}
+                placeholder="glpat-…"
+              />
+            </div>
+            <div className="field">
+              <label>Webhook secret</label>
+              <input
+                type="password"
+                autoComplete="off"
+                value={gitlab.gitlab_webhook_secret}
+                onChange={(e) => setGitlab({ ...gitlab, gitlab_webhook_secret: e.target.value })}
+              />
             </div>
             <div className="field">
               <label>Grafana base URL</label>

@@ -70,7 +70,8 @@ public class GitLabWebhookController {
         JsonNode variables = root.path("object_attributes").path("variables");
         if (variables.isArray()) {
             for (JsonNode v : variables) {
-                if ("LOADTEST_RUN_ID".equals(v.path("key").asText())) {
+                String key = v.path("key").asText();
+                if ("PORTAL_RUN_ID".equals(key) || "LOADTEST_RUN_ID".equals(key)) {
                     try {
                         return UUID.fromString(v.path("value").asText());
                     } catch (IllegalArgumentException ignored) {

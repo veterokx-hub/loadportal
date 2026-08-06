@@ -9,6 +9,13 @@ public record CreateTestRunRequest(
         String scenarioName,
         String engine,
         String targetUrl,
+        String startTime,
+        String endTime,
+        String cpu,
+        String memory,
+        String scenarioPath,
+        String podName,
+        String repository,
         Map<String, Object> params,
         Map<String, String> labels
 ) {

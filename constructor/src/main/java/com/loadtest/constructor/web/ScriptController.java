@@ -56,10 +56,20 @@ public class ScriptController {
     /** Имя приходит от пользователя при upload — чистим, чтобы не сломать заголовок. */
     private static String safeFilename(String filename, String engine) {
         String base = filename == null ? "" : filename.replaceAll("[^a-zA-Z0-9._-]", "_");
+        base = base.replaceAll("_+", "_").replaceAll("^_|_$", "");
         if (base.isBlank() || base.equals(".") || base.equals("..")) {
-            return "k6".equalsIgnoreCase(engine) ? "script.js" : "script.jmx";
+            return defaultFilename(engine);
+        }
+        String lower = base.toLowerCase(Locale.ROOT);
+        if (!lower.endsWith(".jmx") && !lower.endsWith(".js") && !lower.endsWith(".ts")
+                && !lower.endsWith(".zip")) {
+            return base + ("k6".equalsIgnoreCase(engine) ? ".js" : ".jmx");
         }
         return base;
+    }
+
+    private static String defaultFilename(String engine) {
+        return "k6".equalsIgnoreCase(engine) ? "scenario.js" : "scenario.jmx";
     }
 
     /**
