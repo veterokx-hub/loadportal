@@ -62,9 +62,8 @@ public class BuildController {
     }
 
     /**
-     * Разовая генерация без записи в историю: для curl/CI.
-     * Портал сохраняет артефакт через {@code /api/builds/save} — так один build_id
-     * соответствует ровно одному script_id.
+     * Разовая генерация без записи в историю: UI «Выгрузить скрипт», curl/CI.
+     * История и script_id — только через {@code /api/builds/save}.
      */
     @PostMapping("/build")
     public ResponseEntity<byte[]> build(@RequestBody Scenario scenario, HttpServletRequest request) {

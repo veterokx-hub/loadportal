@@ -226,6 +226,25 @@ export async function saveBuild(
   return res.json();
 }
 
+/**
+ * Разовая генерация без записи в историю сборок (POST /api/build или /api/build/k6).
+ */
+export async function generateScript(
+  scenario: Scenario,
+  engine: "jmeter" | "k6"
+): Promise<BuildResult> {
+  const path = engine === "k6" ? "/api/build/k6" : "/api/build";
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(scenario),
+  });
+  await ensureOk(res);
+  const fromHeader = filenameFromContentDisposition(res.headers.get("Content-Disposition"));
+  const fallback = engine === "k6" ? "scenario.js" : "scenario.jmx";
+  return { blob: await res.blob(), filename: fromHeader || fallback };
+}
+
 export async function listScripts(): Promise<ScriptSummary[]> {
   const res = await fetch(`${BASE}/api/scripts`, { headers: { ...authHeaders() } });
   await ensureOk(res);

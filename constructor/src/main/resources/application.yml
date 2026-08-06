@@ -78,3 +78,9 @@ loadtest:
     admin-password: ${LOADTEST_BOOTSTRAP_ADMIN_PASSWORD:admin}
   # Argo Job: --loadtest.db-init-exit=true --spring.main.web-application-type=none
   db-init-exit: false
+  builds:
+    # Sliding window при сохранении + фоновый TTL.
+    retention-days: ${LOADTEST_BUILDS_RETENTION_DAYS:30}
+    cleanup-enabled: ${LOADTEST_BUILDS_CLEANUP_ENABLED:true}
+    # Каждый день в 03:15 UTC
+    cleanup-cron: ${LOADTEST_BUILDS_CLEANUP_CRON:0 15 3 * * *}

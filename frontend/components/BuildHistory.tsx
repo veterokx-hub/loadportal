@@ -100,7 +100,7 @@ export function BuildHistory({
       <div className="build-history-head">
         <h3>История сборок</h3>
         <span className="muted" style={{ fontSize: 12 }}>
-          пользователь: <code>{getUsername()}</code> · последние 20
+          пользователь: <code>{getUsername()}</code> · последние 30 · TTL 30 дн.
         </span>
         <button className="ghost small" type="button" onClick={load} disabled={loading}>
           {loading ? "…" : "Обновить"}

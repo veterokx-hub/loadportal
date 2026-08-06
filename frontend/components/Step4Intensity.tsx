@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { Intensity, RequestModel, Scenario, TestMode } from "@/lib/types";
-import { downloadBlob, downloadScript, saveBuild } from "@/lib/api";
+import { downloadBlob, generateScript, saveBuild } from "@/lib/api";
 import { groupRequests, groupTitle, groupIntensity } from "@/lib/grouping";
 import { formatRps, groupProfile } from "@/lib/profile";
 import { LoadChart, CHART_COLORS, type Series } from "@/components/LoadChart";
@@ -93,11 +93,10 @@ export function Step4Intensity({
     setDone(null);
     setSavedHint(null);
     try {
-      const saved = await saveBuild(scenario, engine);
-      const { blob, filename } = await downloadScript(saved.script_id, saved.filename);
+      // Выгрузка без истории: разовая генерация, без build_id / script_id.
+      const { blob, filename } = await generateScript(scenario, engine);
       downloadBlob(blob, filename);
       setDone(filename);
-      setHistoryKey((k) => k + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -546,7 +545,7 @@ export function Step4Intensity({
             className="ghost"
             onClick={build}
             disabled={building || saving || groups.length === 0}
-            title="Сохранить сборку и скачать сохранённый артефакт"
+            title="Скачать .jmx/.js без записи в историю сборок"
           >
             {building ? "Собираем…" : "Выгрузить скрипт"}
           </button>

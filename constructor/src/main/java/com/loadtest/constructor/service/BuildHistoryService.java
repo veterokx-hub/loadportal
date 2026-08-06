@@ -7,29 +7,38 @@ import com.loadtest.constructor.persistence.BuildRecordEntity;
 import com.loadtest.constructor.persistence.BuildRecordRepository;
 import com.loadtest.constructor.persistence.ScriptRepository;
 import com.loadtest.constructor.web.dto.BuildRecordSummary;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 @Service
 public class BuildHistoryService {
 
-    public static final int MAX_BUILDS_PER_USER = 20;
+    private static final Logger log = LoggerFactory.getLogger(BuildHistoryService.class);
+
+    public static final int MAX_BUILDS_PER_USER = 30;
 
     private final BuildRecordRepository repository;
     private final ScriptRepository scriptRepository;
     private final ObjectMapper objectMapper;
+    private final int retentionDays;
 
     public BuildHistoryService(
             BuildRecordRepository repository,
             ScriptRepository scriptRepository,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            @Value("${loadtest.builds.retention-days:30}") int retentionDays) {
         this.repository = repository;
         this.scriptRepository = scriptRepository;
         this.objectMapper = objectMapper;
+        this.retentionDays = Math.max(1, retentionDays);
     }
 
     @Transactional
@@ -60,8 +69,31 @@ public class BuildHistoryService {
     @Transactional
     public void delete(UUID id, String username, boolean admin) {
         BuildRecordEntity entity = requireOwnedOrAdmin(id, username, admin);
-        scriptRepository.deleteByBuildId(entity.getId());
-        repository.delete(entity);
+        deleteBuildsWithScripts(List.of(entity.getId()));
+    }
+
+    /**
+     * Удаляет сборки старше retention (и связанные portal_build скрипты).
+     *
+     * @return число удалённых сборок
+     */
+    @Transactional
+    public int purgeExpired() {
+        Instant cutoff = Instant.now().minusSeconds(retentionDays * 24L * 3600L);
+        List<UUID> ids = repository.findIdsByCreatedAtBefore(cutoff);
+        if (!ids.isEmpty()) {
+            deleteBuildsWithScripts(ids);
+            log.info("Purged {} build(s) older than {} days (before {})", ids.size(), retentionDays, cutoff);
+        }
+        int orphans = scriptRepository.deleteOrphanBuildScripts();
+        if (orphans > 0) {
+            log.info("Purged {} orphan script(s) without build_records", orphans);
+        }
+        return ids.size();
+    }
+
+    public int retentionDays() {
+        return retentionDays;
     }
 
     private BuildRecordEntity requireOwnedOrAdmin(UUID id, String username, boolean admin) {
@@ -81,7 +113,15 @@ public class BuildHistoryService {
         List<UUID> excess = all.subList(MAX_BUILDS_PER_USER, all.size()).stream()
                 .map(BuildRecordEntity::getId)
                 .toList();
-        repository.deleteByIdIn(excess);
+        deleteBuildsWithScripts(excess);
+    }
+
+    private void deleteBuildsWithScripts(List<UUID> buildIds) {
+        if (buildIds == null || buildIds.isEmpty()) {
+            return;
+        }
+        scriptRepository.deleteByBuildIdIn(buildIds);
+        repository.deleteByIdIn(buildIds);
     }
 
     private String toJson(Scenario scenario) {
