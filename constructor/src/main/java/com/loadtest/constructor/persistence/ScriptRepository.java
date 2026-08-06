@@ -29,4 +29,6 @@ public interface ScriptRepository extends JpaRepository<ScriptEntity, UUID> {
     List<Summary> findAllProjectedByUsernameOrderByCreatedAtDesc(String username);
 
     Optional<ScriptEntity> findFirstByBuildIdOrderByCreatedAtDesc(UUID buildId);
+
+    void deleteByBuildId(UUID buildId);
 }

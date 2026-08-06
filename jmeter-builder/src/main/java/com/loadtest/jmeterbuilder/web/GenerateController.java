@@ -88,8 +88,17 @@ public class GenerateController {
         }
     }
 
+    /**
+     * CSV с заголовком: первая строка — имена колонок (variableNames), далее данные.
+     * Согласовано с ignoreFirstLine=true в CSV Data Set / Random CSV.
+     */
     private String toCsv(Dataset ds) {
         StringBuilder sb = new StringBuilder();
+        List<String> columns = ds.columns();
+        if (!columns.isEmpty()) {
+            sb.append(String.join(",", columns.stream().map(this::escapeCsv).toList()));
+            sb.append("\n");
+        }
         for (List<String> row : ds.rows()) {
             sb.append(String.join(",", row.stream().map(this::escapeCsv).toList()));
             sb.append("\n");
@@ -107,6 +116,9 @@ public class GenerateController {
 
     private String safeName(String name) {
         if (name == null || name.isBlank()) return "scenario";
-        return name.replaceAll("[^a-zA-Z0-9_.-]", "_");
+        String cleaned = name.replaceAll("[^a-zA-Z0-9_.-]", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_|_$", "");
+        return cleaned.isBlank() ? "scenario" : cleaned;
     }
 }

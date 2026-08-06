@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { BuildHistoryItem } from "@/lib/api";
-import { listBuilds, loadBuildScenario } from "@/lib/api";
+import { deleteBuild, listBuilds, loadBuildScenario } from "@/lib/api";
 import type { Scenario } from "@/lib/types";
 import { getUsername } from "@/lib/auth";
 import { SaveScenarioDialog } from "@/components/SaveScenarioDialog";
@@ -23,6 +23,7 @@ export function BuildHistory({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [pendingRestoreId, setPendingRestoreId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -61,6 +62,22 @@ export function BuildHistory({
       return;
     }
     doRestore(id);
+  }
+
+  async function remove(id: string) {
+    if (!window.confirm("Удалить эту сборку? Связанный скрипт portal_build тоже будет удалён.")) {
+      return;
+    }
+    setDeleting(id);
+    setError(null);
+    try {
+      await deleteBuild(id);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleting(null);
+    }
   }
 
   return (
@@ -119,14 +136,24 @@ export function BuildHistory({
                     <code>{it.filename}</code>
                   </td>
                   <td>
-                    <button
-                      className="ghost small"
-                      type="button"
-                      disabled={restoring === it.id}
-                      onClick={() => restore(it.id)}
-                    >
-                      {restoring === it.id ? "…" : "Подтянуть"}
-                    </button>
+                    <div className="inline" style={{ gap: 6, justifyContent: "flex-end" }}>
+                      <button
+                        className="ghost small"
+                        type="button"
+                        disabled={restoring === it.id || deleting === it.id}
+                        onClick={() => restore(it.id)}
+                      >
+                        {restoring === it.id ? "…" : "Подтянуть"}
+                      </button>
+                      <button
+                        className="ghost small"
+                        type="button"
+                        disabled={deleting === it.id || restoring === it.id}
+                        onClick={() => remove(it.id)}
+                      >
+                        {deleting === it.id ? "…" : "Удалить"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

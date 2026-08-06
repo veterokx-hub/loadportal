@@ -41,20 +41,37 @@ public class PortalSettingsEntity {
     @Column(name = "gitlab_project_id", length = 256)
     private String gitlabProjectId = "";
 
+    /** Legacy: ref всегда master в коде; колонка сохранена для совместимости. */
     @Column(name = "gitlab_trigger_ref", length = 256)
-    private String gitlabTriggerRef = "main";
+    private String gitlabTriggerRef = "master";
 
+    /** Legacy: заменено на TOOL=jmeter|k6. */
     @Column(name = "gitlab_jmeter_variable", length = 128)
     private String gitlabJmeterVariable = "LOADTEST_ENGINE=jmeter";
 
+    /** Legacy: заменено на TOOL=jmeter|k6. */
     @Column(name = "gitlab_k6_variable", length = 128)
     private String gitlabK6Variable = "LOADTEST_ENGINE=k6";
 
+    /** Legacy Vault path; токен теперь в gitlab_trigger_token. */
     @Column(name = "gitlab_trigger_token_vault_path", length = 512)
     private String gitlabTriggerTokenVaultPath = "loadtest/gitlab/trigger-token";
 
+    /** Legacy Vault path; секрет теперь в gitlab_webhook_secret. */
     @Column(name = "gitlab_webhook_secret_vault_path", length = 512)
     private String gitlabWebhookSecretVaultPath = "loadtest/gitlab/webhook-secret";
+
+    @Column(name = "gitlab_repository", length = 256)
+    private String gitlabRepository = "lt-ump";
+
+    @Column(name = "gitlab_trigger_token", length = 512)
+    private String gitlabTriggerToken = "";
+
+    @Column(name = "gitlab_upload_token", length = 512)
+    private String gitlabUploadToken = "";
+
+    @Column(name = "gitlab_webhook_secret", length = 512)
+    private String gitlabWebhookSecret = "";
 
     @Column(name = "grafana_base_url", length = 512)
     private String grafanaBaseUrl = "";
@@ -191,6 +208,38 @@ public class PortalSettingsEntity {
 
     public void setGitlabWebhookSecretVaultPath(String gitlabWebhookSecretVaultPath) {
         this.gitlabWebhookSecretVaultPath = gitlabWebhookSecretVaultPath;
+    }
+
+    public String getGitlabRepository() {
+        return gitlabRepository;
+    }
+
+    public void setGitlabRepository(String gitlabRepository) {
+        this.gitlabRepository = gitlabRepository;
+    }
+
+    public String getGitlabTriggerToken() {
+        return gitlabTriggerToken;
+    }
+
+    public void setGitlabTriggerToken(String gitlabTriggerToken) {
+        this.gitlabTriggerToken = gitlabTriggerToken;
+    }
+
+    public String getGitlabUploadToken() {
+        return gitlabUploadToken;
+    }
+
+    public void setGitlabUploadToken(String gitlabUploadToken) {
+        this.gitlabUploadToken = gitlabUploadToken;
+    }
+
+    public String getGitlabWebhookSecret() {
+        return gitlabWebhookSecret;
+    }
+
+    public void setGitlabWebhookSecret(String gitlabWebhookSecret) {
+        this.gitlabWebhookSecret = gitlabWebhookSecret;
     }
 
     public String getGrafanaBaseUrl() {

@@ -326,3 +326,5 @@ Mermaid-диаграммы рендерятся в:
 - [`config/consul-vault-config.yaml`](../config/consul-vault-config.yaml) — адреса / Consul / Vault
 - [`README.md`](../README.md) — same-origin frontend, bootstrap-admin, Liquibase init-job
 - [`domain-model.md`](domain-model.md)
+- [`class-diagrams.md`](class-diagrams.md) — классы по модулям, ручки и внешние вызовы
+- [`metrics.md`](metrics.md)

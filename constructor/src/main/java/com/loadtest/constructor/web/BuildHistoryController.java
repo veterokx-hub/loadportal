@@ -2,9 +2,11 @@ package com.loadtest.constructor.web;
 
 import com.loadtest.constructor.config.AuthInterceptor;
 import com.loadtest.constructor.model.Scenario;
+import com.loadtest.constructor.security.AuthContext;
 import com.loadtest.constructor.service.BuildHistoryService;
 import com.loadtest.constructor.web.dto.BuildRecordSummary;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -30,5 +32,12 @@ public class BuildHistoryController {
     public Scenario loadScenario(@PathVariable UUID id, HttpServletRequest request) {
         String username = AuthInterceptor.requireAuth(request).username();
         return buildHistoryService.loadScenario(id, username);
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable UUID id, HttpServletRequest request) {
+        AuthContext ctx = AuthInterceptor.requireAuth(request);
+        buildHistoryService.delete(id, ctx.username(), ctx.isAdmin());
     }
 }

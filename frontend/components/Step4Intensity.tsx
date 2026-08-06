@@ -94,7 +94,7 @@ export function Step4Intensity({
     setSavedHint(null);
     try {
       const saved = await saveBuild(scenario, engine);
-      const { blob, filename } = await downloadScript(saved.script_id);
+      const { blob, filename } = await downloadScript(saved.script_id, saved.filename);
       downloadBlob(blob, filename);
       setDone(filename);
       setHistoryKey((k) => k + 1);
@@ -480,9 +480,16 @@ export function Step4Intensity({
               доступ в интернет для jslib-импортов (k6-utils
               {done.endsWith(".zip") ? ", papaparse" : ""}).
             </>
+          ) : done.endsWith(".zip") ? (
+            <>
+              В архиве — <code>.jmx</code> и CSV-датасеты: распакуйте и откройте{" "}
+              <code>.jmx</code> в JMeter. Нужны плагины <code>jpgc-casutg</code> и{" "}
+              <code>jpgc-tst</code>.
+            </>
           ) : (
             <>
-              Требуются плагины JMeter <code>jpgc-casutg</code> и <code>jpgc-tst</code>.
+              Откройте файл в JMeter. Нужны плагины <code>jpgc-casutg</code> и{" "}
+              <code>jpgc-tst</code>.
             </>
           )}
         </div>

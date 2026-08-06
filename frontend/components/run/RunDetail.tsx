@@ -49,8 +49,10 @@ export function RunDetail({
 
   if (!run) return null;
 
-  const heap =
-    run.params && typeof run.params.heap_mb === "number" ? run.params.heap_mb : null;
+  const paramStr = (key: string) => {
+    const v = run.params?.[key];
+    return typeof v === "string" && v ? v : null;
+  };
 
   return (
     <section>
@@ -121,12 +123,46 @@ export function RunDetail({
         )}
       </div>
 
-      {heap != null && (
-        <div className="field" style={{ maxWidth: 200 }}>
-          <label>Память JVM</label>
-          <div>{heap} МБ</div>
-        </div>
-      )}
+      <div className="row">
+        {paramStr("scenario_path") && (
+          <div className="field">
+            <label>SCENARIO_PATH</label>
+            <code style={{ fontSize: 12 }}>{paramStr("scenario_path")}</code>
+          </div>
+        )}
+        {paramStr("repository") && (
+          <div className="field">
+            <label>REPOSITORY</label>
+            <code>{paramStr("repository")}</code>
+          </div>
+        )}
+      </div>
+      <div className="row">
+        {paramStr("cpu") && (
+          <div className="field">
+            <label>CPU</label>
+            <code>{paramStr("cpu")}</code>
+          </div>
+        )}
+        {paramStr("memory") && (
+          <div className="field">
+            <label>Memory</label>
+            <code>{paramStr("memory")}</code>
+          </div>
+        )}
+        {paramStr("start_time") && (
+          <div className="field">
+            <label>START_TIME</label>
+            <code style={{ fontSize: 12 }}>{paramStr("start_time")}</code>
+          </div>
+        )}
+        {paramStr("end_time") && (
+          <div className="field">
+            <label>END_TIME</label>
+            <code style={{ fontSize: 12 }}>{paramStr("end_time")}</code>
+          </div>
+        )}
+      </div>
 
       <h3 style={{ fontSize: 13, marginTop: 8 }}>История</h3>
       {run.events.length === 0 ? (

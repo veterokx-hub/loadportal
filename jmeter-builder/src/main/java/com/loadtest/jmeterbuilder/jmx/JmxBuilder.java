@@ -446,7 +446,8 @@ public class JmxBuilder {
         e.appendChild(stringProp(doc, "delimiter", ","));
         e.appendChild(stringProp(doc, "variableNames", String.join(",", ds.columns())));
         e.appendChild(boolProp(doc, "randomOrder", true));
-        e.appendChild(boolProp(doc, "ignoreFirstLine", false));
+        // Первая строка CSV — заголовки колонок (как в портале / k6).
+        e.appendChild(boolProp(doc, "ignoreFirstLine", true));
         e.appendChild(boolProp(doc, "rewindOnTheEndOfList", true));
         e.appendChild(boolProp(doc, "independentListPerThread", false));
         return e;
@@ -458,7 +459,8 @@ public class JmxBuilder {
         e.appendChild(stringProp(doc, "delimiter", ","));
         e.appendChild(stringProp(doc, "fileEncoding", "UTF-8"));
         e.appendChild(stringProp(doc, "filename", ds.fileName()));
-        e.appendChild(boolProp(doc, "ignoreFirstLine", false));
+        // Первая строка CSV — заголовки колонок (как в портале / k6).
+        e.appendChild(boolProp(doc, "ignoreFirstLine", true));
         e.appendChild(stringProp(doc, "variableNames", String.join(",", ds.columns())));
         e.appendChild(boolProp(doc, "quotedData", false));
         e.appendChild(boolProp(doc, "recycle", true));

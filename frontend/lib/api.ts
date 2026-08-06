@@ -60,13 +60,17 @@ export interface LdapSettings {
 export interface GitLabSettings {
   gitlab_base_url: string;
   gitlab_project_id: string;
-  gitlab_trigger_ref: string;
-  gitlab_jmeter_variable: string;
-  gitlab_k6_variable: string;
-  gitlab_trigger_token_vault_path: string;
-  gitlab_webhook_secret_vault_path: string;
+  gitlab_repository: string;
+  gitlab_trigger_token: string;
+  gitlab_upload_token: string;
+  gitlab_webhook_secret: string;
   grafana_base_url: string;
   grafana_dashboard_template: string;
+}
+
+export interface GitLabRunDefaults {
+  gitlab_repository: string;
+  configured: boolean;
 }
 
 export interface GitLabTestResult {
@@ -111,6 +115,13 @@ export interface CreateTestRunBody {
   scenario_name?: string;
   engine?: string;
   target_url?: string;
+  start_time?: string;
+  end_time?: string;
+  cpu?: string;
+  memory?: string;
+  scenario_path?: string;
+  pod_name?: string;
+  repository?: string;
   params?: Record<string, unknown>;
   labels?: Record<string, string>;
 }
@@ -239,16 +250,38 @@ export async function uploadScript(
   return res.json();
 }
 
-/** Скачивает ровно те байты, что сохранены под script_id и уйдут в прогон. */
-export async function downloadScript(scriptId: string): Promise<BuildResult> {
+/** Имя файла из Content-Disposition (filename / filename*). */
+function filenameFromContentDisposition(cd: string | null): string | null {
+  if (!cd) return null;
+  const star = cd.match(/filename\*\s*=\s*(?:UTF-8''|utf-8'')([^;]+)/i);
+  if (star?.[1]) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^["']|["']$/g, ""));
+    } catch {
+      /* ignore malformed */
+    }
+  }
+  const plain = cd.match(/filename\s*=\s*"([^"]+)"|filename\s*=\s*([^;]+)/i);
+  const raw = (plain?.[1] ?? plain?.[2] ?? "").trim();
+  return raw || null;
+}
+
+/**
+ * Скачивает ровно те байты, что сохранены под script_id и уйдут в прогон.
+ * @param fallbackFilename имя из ответа saveBuild — страховка, если CORS скрыл Content-Disposition
+ */
+export async function downloadScript(
+  scriptId: string,
+  fallbackFilename?: string
+): Promise<BuildResult> {
   const res = await fetch(
     `${BASE}/api/scripts/${encodeURIComponent(scriptId)}/download`,
     { headers: { ...authHeaders() } }
   );
   await ensureOk(res);
-  const cd = res.headers.get("Content-Disposition") ?? "";
-  const match = cd.match(/filename="?([^"]+)"?/);
-  return { blob: await res.blob(), filename: match?.[1] ?? "script" };
+  const fromHeader = filenameFromContentDisposition(res.headers.get("Content-Disposition"));
+  const filename = fromHeader || fallbackFilename || "scenario.jmx";
+  return { blob: await res.blob(), filename };
 }
 
 export async function listBuilds(): Promise<BuildHistoryItem[]> {
@@ -263,6 +296,14 @@ export async function loadBuildScenario(id: string): Promise<Scenario> {
   });
   await ensureOk(res);
   return res.json();
+}
+
+export async function deleteBuild(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/builds/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  await ensureOk(res);
 }
 
 export async function listUsers(): Promise<PortalUser[]> {
@@ -312,6 +353,14 @@ export async function saveLdapSettings(body: LdapSettings): Promise<LdapSettings
 
 export async function getGitLabSettings(): Promise<GitLabSettings> {
   const res = await fetch(`${BASE}/api/settings/gitlab`, { headers: { ...authHeaders() } });
+  await ensureOk(res);
+  return res.json();
+}
+
+export async function getGitLabRunDefaults(): Promise<GitLabRunDefaults> {
+  const res = await fetch(`${BASE}/api/settings/gitlab/defaults`, {
+    headers: { ...authHeaders() },
+  });
   await ensureOk(res);
   return res.json();
 }

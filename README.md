@@ -209,6 +209,7 @@ Auth: Bearer на `/api/**`, кроме `POST /api/auth/login` и `POST /api/run
 | POST | `/api/builds/save` | Сборка + запись → `build_id` + `script_id` |
 | GET | `/api/builds` | История сборок (последние 20 на пользователя) |
 | GET | `/api/builds/{id}/scenario` | Восстановить Scenario из сборки |
+| DELETE | `/api/builds/{id}` | Удалить сборку (+ связанный portal_build скрипт) |
 
 ### Скрипты
 
@@ -222,7 +223,7 @@ Auth: Bearer на `/api/**`, кроме `POST /api/auth/login` и `POST /api/run
 
 | Метод | Путь | Описание |
 |---|---|---|
-| POST | `/api/runs` | Создать прогон |
+| POST | `/api/runs` | Залить скрипт в Git + trigger pipeline + создать прогон |
 | GET | `/api/runs` | Список прогонов |
 | GET | `/api/runs/{id}` | Карточка прогона |
 | POST | `/api/runs/webhook/gitlab` | Webhook GitLab (`X-Gitlab-Token`, без Bearer) |
@@ -236,7 +237,8 @@ Auth: Bearer на `/api/**`, кроме `POST /api/auth/login` и `POST /api/run
 | PUT | `/api/users/{username}/password` | Сменить пароль пользователя |
 | DELETE | `/api/users/{username}` | Удалить пользователя |
 | GET/PUT | `/api/settings/ldap` | LDAP |
-| GET/PUT | `/api/settings/gitlab` | GitLab CI + Grafana |
+| GET/PUT | `/api/settings/gitlab` | GitLab CI + Grafana (admin; токены в UI) |
+| GET | `/api/settings/gitlab/defaults` | REPOSITORY для формы запуска |
 | POST | `/api/settings/gitlab/test` | Проверка соединения с GitLab |
 
 ### Служебные
