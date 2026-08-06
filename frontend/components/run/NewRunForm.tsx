@@ -11,6 +11,7 @@ import {
   loadBuildScenario,
   uploadScript,
 } from "@/lib/api";
+import { groupIntensity, groupRequests } from "@/lib/grouping";
 import { totalDuration } from "@/lib/profile";
 
 type SourceMode = "build" | "upload";
@@ -81,7 +82,12 @@ export function NewRunForm({
 
   const durationSec = useMemo(() => {
     if (!scenarioPreview) return 300;
-    return totalDuration(scenarioPreview.intensity, scenarioPreview.load);
+    const groups = groupRequests(scenarioPreview);
+    if (groups.length === 0) return 300;
+    return groups.reduce(
+      (max, g) => Math.max(max, totalDuration(groupIntensity(g), scenarioPreview.load)),
+      0
+    );
   }, [scenarioPreview]);
 
   useEffect(() => {
