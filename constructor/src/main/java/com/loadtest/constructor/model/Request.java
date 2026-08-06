@@ -11,6 +11,7 @@ public record Request(
         String name,
         String method,
         String path,
+        String url,
         List<KeyValue> headers,
         List<Param> queryParams,
         Body body,

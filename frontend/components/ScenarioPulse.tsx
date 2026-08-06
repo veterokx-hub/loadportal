@@ -3,6 +3,7 @@
 import { useMemo, useState, type CSSProperties } from "react";
 import type { Scenario } from "@/lib/types";
 import { analyzeScenario, type ReadinessCheck } from "@/lib/readiness";
+import { formatRps } from "@/lib/profile";
 
 const SEV_ICON: Record<string, string> = {
   error: "✕",
@@ -74,7 +75,7 @@ export function ScenarioPulse({
           <div className="pulse-score-meta">
             <strong>{report.label}</strong>
             <span className="muted">
-              {report.requestCount} запр. · {report.peakRps} RPS · ~
+              {report.requestCount} запр. · {formatRps(report.peakRps)} RPS · ~
               {report.durationSec < 60
                 ? `${report.durationSec}с`
                 : `${Math.round(report.durationSec / 60)}мин`}

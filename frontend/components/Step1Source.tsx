@@ -3,13 +3,39 @@
 import { useState } from "react";
 import { analyze } from "@/lib/api";
 import type { Scenario, SourceType } from "@/lib/types";
+import { BuildHistory } from "@/components/BuildHistory";
+
+/** Пустой сценарий для сборки «с чистого листа» — без спецификации. */
+function blankScenario(name: string): Scenario {
+  return {
+    name: name.trim() || "Новый сценарий",
+    source_type: "openapi",
+    base_url: "",
+    load: { test_mode: "ramp_hold", steps: 5, step_duration_sec: 60, assumed_latency_sec: 1.0 },
+    datasets: [],
+    autostop: {
+      enabled: false,
+      error_rate_pct: 50,
+      error_rate_sec: 10,
+      avg_response_ms: 0,
+      avg_response_sec: 0,
+    },
+    prometheus: { exporter_port: 9001, run_id: "1", samplers_reg_exp: ".*", slo_levels: "0.1;1" },
+    requests: [],
+  };
+}
 
 export function Step1Source({
   onAnalyzed,
+  onRestore,
+  currentScenario,
 }: {
   onAnalyzed: (s: Scenario) => void;
+  /** Подтянуть сохранённую сборку (полная замена текущего сценария). */
+  onRestore?: (s: Scenario) => void;
+  currentScenario?: Scenario | null;
 }) {
-  const [sourceType, setSourceType] = useState<SourceType>("openapi");
+  const [sourceType, setSourceType] = useState<SourceType | "blank">("openapi");
   const [mode, setMode] = useState<"url" | "content">("url");
   const [url, setUrl] = useState("");
   const [content, setContent] = useState("");
@@ -17,10 +43,15 @@ export function Step1Source({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isBlank = sourceType === "blank";
   // Postman-коллекция принимается только как JSON-содержимое (без URL).
   const inputMode = sourceType === "postman" ? "content" : mode;
 
   async function run() {
+    if (isBlank) {
+      onAnalyzed(blankScenario(name));
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -38,7 +69,8 @@ export function Step1Source({
     }
   }
 
-  const canRun = inputMode === "url" ? url.trim().length > 0 : content.trim().length > 0;
+  const canRun =
+    isBlank || (inputMode === "url" ? url.trim().length > 0 : content.trim().length > 0);
 
   return (
     <div className="panel">
@@ -59,7 +91,18 @@ export function Step1Source({
           >
             Postman Collection
           </div>
+          <div
+            className={`pill-source ${isBlank ? "active" : ""}`}
+            onClick={() => setSourceType("blank")}
+          >
+            С чистого листа
+          </div>
         </div>
+        {isBlank && (
+          <div className="hint">
+            Сценарий создаётся без спецификации — запросы добавите вручную на шаге «Запросы».
+          </div>
+        )}
       </div>
 
       {sourceType === "openapi" && (
@@ -82,7 +125,7 @@ export function Step1Source({
         </div>
       )}
 
-      {inputMode === "url" ? (
+      {isBlank ? null : inputMode === "url" ? (
         <div className="field">
           <label>URL Swagger/OpenAPI</label>
           <input
@@ -117,7 +160,9 @@ export function Step1Source({
       <div className="field">
         <label>Название сценария (необязательно)</label>
         <input
-          placeholder="Возьмётся из спецификации, если не указано"
+          placeholder={
+            isBlank ? "Новый сценарий" : "Возьмётся из спецификации, если не указано"
+          }
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
@@ -128,9 +173,20 @@ export function Step1Source({
       <div className="footer-nav">
         <span />
         <button onClick={run} disabled={!canRun || loading}>
-          {loading ? "Анализируем..." : "Анализировать →"}
+          {isBlank
+            ? "Создать пустой сценарий →"
+            : loading
+              ? "Анализируем..."
+              : "Анализировать →"}
         </button>
       </div>
+
+      {onRestore && (
+        <BuildHistory
+          onRestore={onRestore}
+          currentScenario={currentScenario}
+        />
+      )}
     </div>
   );
 }

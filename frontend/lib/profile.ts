@@ -5,6 +5,20 @@ export interface ProfilePoint {
   rps: number;
 }
 
+/** Формат RPS для UI: 0.01 не превращается в «0» / «0.0». */
+export function formatRps(n: number): string {
+  if (!Number.isFinite(n) || n === 0) return "0";
+  const abs = Math.abs(n);
+  if (abs >= 10) return n.toFixed(0);
+  if (abs >= 1) return trimFloat(n.toFixed(1));
+  if (abs >= 0.01) return trimFloat(n.toFixed(2));
+  return trimFloat(n.toFixed(3));
+}
+
+function trimFloat(s: string): string {
+  return s.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+}
+
 /**
  * Профиль интенсивности одной группы во времени — зеркало логики Throughput
  * Shaping Timer в JmxBuilder.

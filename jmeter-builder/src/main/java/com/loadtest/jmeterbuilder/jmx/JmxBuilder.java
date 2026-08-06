@@ -269,15 +269,18 @@ public class JmxBuilder {
             appendQueryArgument(doc, coll, qp.name(), render(qp.source()));
         }
         if (rawBody) {
-            appendBodyArgument(doc, coll, req.body().content());
+            appendBodyArgument(doc, coll, effectiveBody(req));
         }
         e.appendChild(args);
 
-        e.appendChild(stringProp(doc, "HTTPSampler.domain", ""));
-        e.appendChild(stringProp(doc, "HTTPSampler.port", ""));
-        e.appendChild(stringProp(doc, "HTTPSampler.protocol", ""));
+        // Собственный URL запроса переопределяет HTTP Request Defaults (base_url).
+        UrlParts custom = req.hasCustomUrl() ? UrlParts.parseLenient(req.url()) : null;
+        e.appendChild(stringProp(doc, "HTTPSampler.domain", custom == null ? "" : custom.host));
+        e.appendChild(stringProp(doc, "HTTPSampler.port", custom == null ? "" : custom.port));
+        e.appendChild(stringProp(doc, "HTTPSampler.protocol", custom == null ? "" : custom.protocol));
         e.appendChild(stringProp(doc, "HTTPSampler.contentEncoding", ""));
-        e.appendChild(stringProp(doc, "HTTPSampler.path", effectivePath(req, base)));
+        e.appendChild(stringProp(doc, "HTTPSampler.path",
+                custom == null ? effectivePath(req, base) : renderPathParams(req, custom.basePath)));
         e.appendChild(stringProp(doc, "HTTPSampler.method", req.method()));
         e.appendChild(boolProp(doc, "HTTPSampler.follow_redirects", true));
         e.appendChild(boolProp(doc, "HTTPSampler.auto_redirects", false));
@@ -467,17 +470,42 @@ public class JmxBuilder {
     // --- Рендеринг значений параметров -------------------------------------------
 
     private String effectivePath(Request req, UrlParts base) {
-        String path = req.path() == null ? "/" : req.path();
-        for (Param p : req.params()) {
-            if (p.location() == ParamLocation.PATH) {
-                path = path.replace("{" + p.name() + "}", render(p.source()));
-            }
-        }
+        String path = renderPathParams(req, req.path() == null ? "/" : req.path());
         String basePath = base.basePath == null ? "" : base.basePath;
         if (!basePath.isEmpty() && !path.startsWith(basePath)) {
             path = basePath + path;
         }
         return path;
+    }
+
+    /** Подставляет path-параметры {name} в шаблон пути. */
+    private String renderPathParams(Request req, String template) {
+        String path = template == null || template.isEmpty() ? "/" : template;
+        for (Param p : req.params()) {
+            if (p.location() == ParamLocation.PATH) {
+                path = replacePlaceholder(path, p.name(), render(p.source()));
+            }
+        }
+        return path;
+    }
+
+    /** Подставляет body-параметры {name} в тело запроса ({name}, но не ${name}). */
+    private String effectiveBody(Request req) {
+        String content = req.body().content();
+        for (Param p : req.params()) {
+            if (p.location() == ParamLocation.BODY) {
+                content = replacePlaceholder(content, p.name(), render(p.source()));
+            }
+        }
+        return content;
+    }
+
+    /** Замена {name} → value, не трогая JMeter-переменные ${name}. */
+    private static String replacePlaceholder(String text, String name, String value) {
+        if (text == null || name == null || name.isBlank()) return text;
+        return text.replaceAll(
+                "(?<!\\$)\\{" + java.util.regex.Pattern.quote(name) + "\\}",
+                java.util.regex.Matcher.quoteReplacement(value == null ? "" : value));
     }
 
     private List<KeyValue> effectiveHeaders(Request req) {
@@ -623,6 +651,34 @@ public class JmxBuilder {
             } catch (Exception e) {
                 return new UrlParts("", "", "", "");
             }
+        }
+
+        /**
+         * Разбор без java.net.URI — переносит {param} и query в path без ошибок.
+         * Нужен для собственных URL запросов, где путь может содержать {…}.
+         */
+        static UrlParts parseLenient(String url) {
+            if (url == null || url.isBlank()) {
+                return new UrlParts("", "", "", "");
+            }
+            String s = url.trim();
+            String proto = "";
+            int schemeIdx = s.indexOf("://");
+            if (schemeIdx >= 0) {
+                proto = s.substring(0, schemeIdx);
+                s = s.substring(schemeIdx + 3);
+            }
+            int slash = s.indexOf('/');
+            String authority = slash >= 0 ? s.substring(0, slash) : s;
+            String path = slash >= 0 ? s.substring(slash) : "/";
+            String host = authority;
+            String port = "";
+            int colon = authority.lastIndexOf(':');
+            if (colon >= 0) {
+                host = authority.substring(0, colon);
+                port = authority.substring(colon + 1);
+            }
+            return new UrlParts(proto, host, port, path);
         }
     }
 

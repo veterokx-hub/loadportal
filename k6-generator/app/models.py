@@ -178,6 +178,7 @@ class Request(BaseModel):
     name: str
     method: str
     path: str
+    url: Optional[str] = None  # собственный абсолютный URL (переопределяет base_url + path)
     headers: list[KeyValue] = Field(default_factory=list)
     query_params: list[Param] = Field(default_factory=list)
     body: Body = Field(default_factory=Body)

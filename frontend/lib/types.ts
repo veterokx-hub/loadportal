@@ -73,6 +73,8 @@ export interface RequestModel {
   name: string;
   method: string;
   path: string;
+  /** Собственный абсолютный URL — переопределяет base_url + path. */
+  url?: string | null;
   headers: KeyValue[];
   query_params: Param[];
   body: Body;

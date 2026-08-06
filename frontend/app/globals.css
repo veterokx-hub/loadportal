@@ -1154,6 +1154,13 @@ code {
   width: 18px;
 }
 
+/* Панель действий над шагами сценария */
+.scenario-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
 /* Документация */
 .docs-overlay {
   position: fixed;
@@ -1701,6 +1708,13 @@ code {
   flex: 1;
 }
 
+/* Видимы ~3 строки истории; полный список (до 20) — со скроллом. */
+.build-history-scroll {
+  max-height: 11.75rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 /* ——— Параметры запроса (шаг 3): вкладки + табличные строки ——— */
 .req-section {
   margin-top: 16px;
@@ -1834,6 +1848,13 @@ code {
 .param-row {
   min-height: 48px;
   transition: background var(--t);
+  /* Верхнее выравнивание: подпись «обязательный» под именем не смещает
+     поля «Имя» и «Источник значения» относительно друг друга. */
+  align-items: start;
+}
+
+.param-row .param-row-remove {
+  align-self: start;
 }
 
 .param-row:hover {

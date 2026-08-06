@@ -119,6 +119,7 @@ public final class ScenarioGrouping {
             addVars(vars, req.body().content());
         }
         addVars(vars, req.path());
+        addVars(vars, req.url());
         return vars;
     }
 

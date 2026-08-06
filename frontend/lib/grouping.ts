@@ -28,6 +28,7 @@ function referencedVars(req: RequestModel): Set<string> {
   });
   scan(req.body?.content);
   scan(req.path);
+  scan(req.url);
   return vars;
 }
 

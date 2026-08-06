@@ -11,6 +11,7 @@ public record Request(
         String name,
         String method,
         String path,
+        String url,
         List<KeyValue> headers,
         List<Param> queryParams,
         Body body,
@@ -24,6 +25,11 @@ public record Request(
     /** Число повторов запроса за одну итерацию потока (Loop Controller). */
     public int repeatOrOne() {
         return repeat > 0 ? repeat : 1;
+    }
+
+    /** Собственный абсолютный URL задан — переопределяет base_url + path. */
+    public boolean hasCustomUrl() {
+        return url != null && !url.isBlank();
     }
 
     public List<KeyValue> headers() {

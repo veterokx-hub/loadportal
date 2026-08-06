@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { usePortal } from "@/context/PortalContext";
 import {
   SCENARIO_STEPS,
@@ -10,6 +11,7 @@ import {
   type ScenarioStepSlug,
 } from "@/lib/routes";
 import { ScenarioPulse } from "@/components/ScenarioPulse";
+import { SaveScenarioDialog } from "@/components/SaveScenarioDialog";
 import { Step1Source } from "@/components/Step1Source";
 import { Step2Requests } from "@/components/Step2Requests";
 import { Step3Correlation } from "@/components/Step3Correlation";
@@ -22,9 +24,11 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
     scenario,
     setScenario,
     maxReached,
+    setMaxReached,
     advanceMax,
     updateRequest,
   } = usePortal();
+  const [newScenarioDialog, setNewScenarioDialog] = useState(false);
 
   const step = SCENARIO_STEPS.find((s) => s.slug === stepSlug)?.index ?? 0;
 
@@ -39,8 +43,40 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
     router.push(scenarioPath(scenarioSlugByIndex(i)));
   }
 
+  function resetToNewScenario() {
+    setNewScenarioDialog(false);
+    setScenario(null);
+    setMaxReached(0);
+    router.push(scenarioPath("source"));
+  }
+
+  function onNewScenarioClick() {
+    // Есть что терять — предлагаем сохранить текущую сборку.
+    if (scenario && scenario.requests.length > 0) {
+      setNewScenarioDialog(true);
+    } else {
+      resetToNewScenario();
+    }
+  }
+
   return (
     <>
+      {newScenarioDialog && scenario && (
+        <SaveScenarioDialog
+          scenario={scenario}
+          title="Новый сценарий"
+          message={`Текущий сценарий «${scenario.name}» будет очищен. Сохранить текущую сборку перед началом нового сценария?`}
+          onCancel={() => setNewScenarioDialog(false)}
+          onDone={resetToNewScenario}
+        />
+      )}
+
+      <div className="scenario-toolbar">
+        <button type="button" className="ghost small" onClick={onNewScenarioClick}>
+          + Новый сценарий
+        </button>
+      </div>
+
       <div className="steps-wrap">
         <div className="steps-progress" aria-hidden>
           <div
@@ -81,9 +117,15 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
 
       {step === 0 && (
         <Step1Source
+          currentScenario={scenario}
           onAnalyzed={(s) => {
             setScenario(s);
             advance(1);
+          }}
+          onRestore={(s) => {
+            setScenario(s);
+            advanceMax(3);
+            router.push(scenarioPath("intensity"));
           }}
         />
       )}

@@ -19,8 +19,52 @@ export function bracesIn(text: string): string[] {
   return out;
 }
 
+/** Шаблон адреса запроса: собственный URL, если задан, иначе path. */
+export function urlTemplate(req: Pick<RequestModel, "path" | "url">): string {
+  const u = (req.url ?? "").trim();
+  return u !== "" ? u : (req.path ?? "");
+}
+
 function pathTemplateHas(req: RequestModel, name: string): boolean {
-  return (req.path ?? "").includes(`{${name}}`);
+  return urlTemplate(req).includes(`{${name}}`);
+}
+
+/**
+ * Пересчитывает path/body-параметры из {…} шаблона адреса и тела,
+ * сохраняя header/query и уже настроенные источники.
+ */
+export function paramsFromTemplates(
+  template: string,
+  body: string,
+  existing: Param[]
+): Param[] {
+  const braceLoc = new Map<string, ParamLocation>();
+  bracesIn(template).forEach((n) => braceLoc.set(n, "path"));
+  bracesIn(body).forEach((n) => {
+    if (!braceLoc.has(n)) braceLoc.set(n, "body");
+  });
+  const braceNames = new Set(braceLoc.keys());
+
+  const fromBraces: Param[] = Array.from(braceLoc.entries()).map(([name, location]) => {
+    const prev = existing.find((p) => p.name === name);
+    if (prev) {
+      return { ...prev, name, location, required: location === "path" ? true : prev.required };
+    }
+    return {
+      name,
+      location,
+      source: { kind: "constant" as const, value: "" },
+      required: true,
+    };
+  });
+
+  const kept = existing.filter((p) => {
+    if (braceNames.has(p.name)) return false;
+    if (p.location === "path") return false;
+    return true;
+  });
+
+  return [...kept, ...fromBraces];
 }
 
 /**
@@ -29,7 +73,7 @@ function pathTemplateHas(req: RequestModel, name: string): boolean {
  * Header / query / body не трогает (кроме совпадения имени с path).
  */
 function ensurePathParams(req: RequestModel): RequestModel {
-  const pathNames = bracesIn(req.path ?? "");
+  const pathNames = bracesIn(urlTemplate(req));
   const pathSet = new Set(pathNames);
   let params = [...req.params];
 

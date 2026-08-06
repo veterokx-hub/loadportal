@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Param, ParamLocation, RequestModel, Scenario } from "@/lib/types";
-import { bracesIn } from "@/lib/request-params";
+import type { RequestModel, Scenario } from "@/lib/types";
+import { paramsFromTemplates, urlTemplate } from "@/lib/request-params";
 
 const METHOD_PRESETS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -12,39 +12,6 @@ function methodOptions(requests: RequestModel[]): string[] {
     if (r.method) all.add(r.method.toUpperCase());
   });
   return Array.from(all);
-}
-
-/**
- * Обновляет path/body-параметры из {…}, сохраняя header/query и уже настроенные источники.
- */
-function paramsFromText(path: string, body: string, existing: Param[]): Param[] {
-  const braceLoc = new Map<string, ParamLocation>();
-  bracesIn(path).forEach((n) => braceLoc.set(n, "path"));
-  bracesIn(body).forEach((n) => {
-    if (!braceLoc.has(n)) braceLoc.set(n, "body");
-  });
-  const braceNames = new Set(braceLoc.keys());
-
-  const fromBraces: Param[] = Array.from(braceLoc.entries()).map(([name, location]) => {
-    const prev = existing.find((p) => p.name === name);
-    if (prev) {
-      return { ...prev, name, location, required: location === "path" ? true : prev.required };
-    }
-    return {
-      name,
-      location,
-      source: { kind: "constant" as const, value: "" },
-      required: true,
-    };
-  });
-
-  const kept = existing.filter((p) => {
-    if (braceNames.has(p.name)) return false;
-    if (p.location === "path") return false;
-    return true;
-  });
-
-  return [...kept, ...fromBraces];
 }
 
 export function Step2Requests({
@@ -77,7 +44,7 @@ export function Step2Requests({
       headers: [],
       query_params: [],
       body: { mode: "none", content_type: null, content: "" },
-      params: paramsFromText(path, "", []),
+      params: paramsFromTemplates(path, "", []),
       extractions: [],
       intensity: { target_rps: 10, ramp_up_sec: 30, hold_sec: 60 },
       validation: { check_response_code: true, expected_status: 200, response_contains: "" },
@@ -160,12 +127,32 @@ export function Step2Requests({
                   onChange={(e) =>
                     patch(r.id, {
                       path: e.target.value,
-                      params: paramsFromText(e.target.value, r.body?.content ?? "", r.params),
+                      params: paramsFromTemplates(
+                        urlTemplate({ path: e.target.value, url: r.url }),
+                        r.body?.content ?? "",
+                        r.params
+                      ),
+                    })
+                  }
+                />
+                <input
+                  style={{ marginTop: 4, fontFamily: "monospace", fontSize: 12 }}
+                  value={r.url ?? ""}
+                  placeholder="Собственный URL: https://other-host.com/api/{id} (необязательно)"
+                  onChange={(e) =>
+                    patch(r.id, {
+                      url: e.target.value || null,
+                      params: paramsFromTemplates(
+                        urlTemplate({ path: r.path, url: e.target.value }),
+                        r.body?.content ?? "",
+                        r.params
+                      ),
                     })
                   }
                 />
                 <div className="hint">
-                  Параметры в <code>{"{...}"}</code> распознаются автоматически.
+                  Параметры в <code>{"{...}"}</code> распознаются автоматически. Собственный URL
+                  переопределяет базовый URL и путь для этого запроса.
                 </div>
               </td>
               <td>

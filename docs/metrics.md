@@ -1,7 +1,9 @@
-# Метрики портала (VictoriaMetrics)
+# Метрики портала
 
 Каждый backend-модуль отдаёт Prometheus-совместимую экспозицию на **`GET /metrics`**.
-Локально их собирает контейнер `victoria-metrics` (порт **8428**).
+Сбор выполняет внешняя (собственная) VictoriaMetrics/Prometheus-инсталляция —
+контейнер сборщика в репозитории не поставляется, добавьте эндпоинты ниже
+в свой scrape-конфиг.
 
 Это метрики **самой платформы** (сборки, прогоны, логины), а не метрики нагружаемого
 стенда — те идут в отдельный Prometheus/Grafana прогона.
@@ -14,9 +16,6 @@
 | jmeter-builder | http://localhost:8081/metrics | Prometheus text |
 | analyzer | http://localhost:8000/metrics | Prometheus text |
 | k6-generator | http://localhost:8001/metrics | Prometheus text |
-| VictoriaMetrics UI / API | http://localhost:8428 | PromQL |
-
-Scrape-конфиг: [`config/victoria-metrics/scrape.yml`](../config/victoria-metrics/scrape.yml).
 
 ## Доменные метрики constructor
 

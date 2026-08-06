@@ -142,6 +142,7 @@ loadtest-portal/
 
 Модуль «Запуск»: [`docs/module-3-run.md`](docs/module-3-run.md).  
 Идентификаторы (`build_id` / `script_id` / `test_id` / `run_id`): [`docs/data-model-ids.md`](docs/data-model-ids.md).  
-Метрики: [`docs/metrics.md`](docs/metrics.md) · VictoriaMetrics UI: http://localhost:8428
+Метрики: [`docs/metrics.md`](docs/metrics.md) — сбор выполняет внешняя VictoriaMetrics.
 
-Общий контракт: [`docs/domain-model.md`](docs/domain-model.md).
+Общий контракт: [`docs/domain-model.md`](docs/domain-model.md).  
+Схемы классов модулей: [`docs/class-diagrams.md`](docs/class-diagrams.md).

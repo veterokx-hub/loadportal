@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { Intensity, RequestModel, Scenario, TestMode } from "@/lib/types";
 import { downloadBlob, downloadScript, saveBuild } from "@/lib/api";
 import { groupRequests, groupTitle, groupIntensity } from "@/lib/grouping";
-import { groupProfile } from "@/lib/profile";
+import { formatRps, groupProfile } from "@/lib/profile";
 import { LoadChart, CHART_COLORS, type Series } from "@/components/LoadChart";
 import { BuildHistory } from "@/components/BuildHistory";
 import { analyzeScenario } from "@/lib/readiness";
@@ -140,7 +140,7 @@ export function Step4Intensity({
     <div className="panel">
       <h2>4. Интенсивность и сборка</h2>
 
-      <div className="row">
+      <div className="row" style={{ alignItems: "flex-end" }}>
         <div className="field" style={{ flex: "none", minWidth: 260 }}>
           <label>Режим теста</label>
           <div className="inline">
@@ -260,7 +260,7 @@ export function Step4Intensity({
         </div>
         <div className="peak-box">
           <div className="lbl">Суммарный пик</div>
-          <div className="val">{peakTotal.toFixed(peakTotal < 10 ? 1 : 0)}</div>
+          <div className="val">{formatRps(peakTotal)}</div>
           <div className="lbl">запросов/сек</div>
         </div>
       </div>
@@ -318,7 +318,7 @@ export function Step4Intensity({
                       title="расчётный RPS запроса (доля от целевого RPS группы с учётом повторов)"
                       style={{ marginLeft: 4 }}
                     >
-                      ≈{reqRps(g, r.repeat).toFixed(1)} rps
+                      ≈{formatRps(reqRps(g, r.repeat))} rps
                     </span>
                   </span>
                 ))}
@@ -327,7 +327,7 @@ export function Step4Intensity({
               <td>
                 <input
                   type="number"
-                  step="0.1"
+                  step="any"
                   min={0}
                   value={groupIntensity(g).target_rps}
                   onChange={(e) =>
@@ -496,7 +496,12 @@ export function Step4Intensity({
 
       <h3 style={{ fontSize: 13, marginTop: 18 }}>Движок и сборка</h3>
 
-      <BuildHistory refreshKey={historyKey} onRestore={onRestoreScenario} />
+      <BuildHistory
+        refreshKey={historyKey}
+        onRestore={onRestoreScenario}
+        currentScenario={scenario}
+        defaultEngine={engine}
+      />
 
       <div className="inline" style={{ marginBottom: 12 }}>
         <div
@@ -520,8 +525,8 @@ export function Step4Intensity({
 
       {readiness.blockers > 0 && (
         <div className="error" style={{ marginTop: 12 }}>
-          Сборка заблокирована: {readiness.blockers} критических замечаний в «Пульсе сценария» выше.
-          Раскройте панель и перейдите к проблемным шагам.
+          В «Пульсе сценария» {readiness.blockers} критических замечаний — сохранение и выгрузка
+          доступны, но перед запуском лучше исправить блокеры.
         </div>
       )}
 
@@ -533,7 +538,7 @@ export function Step4Intensity({
           <button
             className="ghost"
             onClick={build}
-            disabled={building || saving || groups.length === 0 || readiness.blockers > 0}
+            disabled={building || saving || groups.length === 0}
             title="Сохранить сборку и скачать сохранённый артефакт"
           >
             {building ? "Собираем…" : "Выгрузить скрипт"}
@@ -541,17 +546,17 @@ export function Step4Intensity({
           <button
             className="ghost"
             onClick={saveOnly}
-            disabled={building || saving || groups.length === 0 || readiness.blockers > 0}
+            disabled={building || saving || groups.length === 0}
           >
             {saving ? "…" : "Сохранить сборку"}
           </button>
           <button
             className="success"
             onClick={goToRun}
-            disabled={building || saving || groups.length === 0 || readiness.blockers > 0 || !onGoToRun}
+            disabled={building || saving || groups.length === 0 || !onGoToRun}
             title={
               readiness.blockers > 0
-                ? `Исправьте ${readiness.blockers} блокер(ов) в «Пульсе сценария»`
+                ? `Есть ${readiness.blockers} блокер(ов) в пульсе — можно сохранить и перейти к запуску`
                 : "Сохранить сборку и перейти к запуску"
             }
           >

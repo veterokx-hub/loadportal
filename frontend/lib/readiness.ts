@@ -1,6 +1,6 @@
 import { groupIntensity, groupRequests } from "./grouping";
 import { uiParams } from "./request-params";
-import { totalDuration } from "./profile";
+import { formatRps, totalDuration } from "./profile";
 import type { ParamSource, RequestModel, Scenario } from "./types";
 
 export type CheckSeverity = "error" | "warning" | "tip" | "ok";
@@ -74,7 +74,28 @@ function referencedVars(req: RequestModel): Set<string> {
   });
   scan(req.body?.content);
   scan(req.path);
+  scan(req.url);
   return vars;
+}
+
+/**
+ * Переменные, которые даёт CSV Data Set / колонки датасета запроса.
+ * ${column} в теле/пути при источнике CSV — не корреляция и не блокер пульса.
+ * Имя body/path-параметра с источником CSV тоже считается обеспеченным
+ * (генератор подставит ${column} вместо {name}).
+ */
+function csvProvidedVars(req: RequestModel, scenario: Scenario): Set<string> {
+  const out = new Set<string>();
+  const ds = scenario.datasets.find((d) => d.id === req.dataset_id);
+  ds?.columns.forEach((c) => {
+    if (c) out.add(c);
+  });
+  req.params.forEach((p) => {
+    if (p.source.kind !== "csv") return;
+    if (p.source.column.trim()) out.add(p.source.column.trim());
+    if (p.name.trim()) out.add(p.name.trim());
+  });
+  return out;
 }
 
 function formatDuration(sec: number): string {
@@ -112,12 +133,13 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
     });
   }
 
-  if (requests.length > 0 && !scenario.base_url.trim()) {
+  const withoutOwnUrl = requests.some((r) => !(r.url ?? "").trim());
+  if (requests.length > 0 && !scenario.base_url.trim() && withoutOwnUrl) {
     add({
       id: "no-base-url",
       severity: "warning",
       message: "Не задан базовый URL",
-      hint: "Укажите домен на шаге «Запросы»",
+      hint: "Укажите домен на шаге «Запросы» или собственный URL у каждого запроса",
       step: 1,
     });
   }
@@ -146,6 +168,7 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
 
   requests.forEach((req) => {
     const prior = varsFromPrior(requests, req.order);
+    const fromCsv = csvProvidedVars(req, scenario);
 
     uiParams(req).forEach((p) => {
       if (p.required && sourceEmpty(p.source)) {
@@ -158,7 +181,11 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
           requestId: req.id,
         });
       }
-      if (p.source.kind === "correlation" && !prior.has(p.source.variable)) {
+      if (
+        p.source.kind === "correlation" &&
+        !prior.has(p.source.variable) &&
+        !fromCsv.has(p.source.variable)
+      ) {
         add({
           id: `corr-${req.id}-${p.source.variable}`,
           severity: "error",
@@ -191,15 +218,15 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
     });
 
     referencedVars(req).forEach((v) => {
-      if (!prior.has(v)) {
-        add({
-          id: `var-${req.id}-${v}`,
-          severity: "error",
-          message: `«${req.name}»: переменная \${${v}} не извлечена ранее`,
-          step: 2,
-          requestId: req.id,
-        });
-      }
+      // CSV Data Set / колонка параметра уже даёт ${v} в рантайме — это не блокер.
+      if (prior.has(v) || fromCsv.has(v)) return;
+      add({
+        id: `var-${req.id}-${v}`,
+        severity: "error",
+        message: `«${req.name}»: переменная \${${v}} не извлечена ранее`,
+        step: 2,
+        requestId: req.id,
+      });
     });
   });
 
@@ -299,7 +326,7 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
     requests.length === 0
       ? "Сценарий пуст — импортируйте спецификацию, чтобы начать."
       : `Нагрузочный сценарий «${scenario.name}»: ${requests.length} запросов к ${host}, ` +
-        `пик ${peakRps} RPS, длительность ~${formatDuration(durationSec)}, режим ${mode}` +
+        `пик ${formatRps(peakRps)} RPS, длительность ~${formatDuration(durationSec)}, режим ${mode}` +
         (chainCount > 0 ? `, ${chainCount} цепоч${chainCount === 1 ? "ка" : chainCount < 5 ? "ки" : "ек"} корреляции` : "") +
         ".";
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ProfilePoint } from "@/lib/profile";
+import { formatRps, type ProfilePoint } from "@/lib/profile";
 
 export interface Series {
   label: string;
@@ -117,9 +117,11 @@ export function LoadChart({ series }: { series: Series[] }) {
       : isolated === TOTAL_LABEL
         ? []
         : series;
-  const maxRps = showTotal
-    ? Math.max(1, ...totalPts.map((p) => p.rps))
-    : Math.max(1, ...visible.flatMap((s) => s.points.map((p) => p.rps)));
+  // Не зажимаем шкалу снизу единицей — иначе 0.01 RPS визуально «прилипает» к нулю.
+  const rawMax = showTotal
+    ? Math.max(0, ...totalPts.map((p) => p.rps))
+    : Math.max(0, ...visible.flatMap((s) => s.points.map((p) => p.rps)));
+  const maxRps = rawMax > 0 ? rawMax * 1.05 : 1;
 
   const x = (t: number) => padL + (t / maxT) * (W - padL - padR);
   const y = (r: number) => H - padB - (r / maxRps) * (H - padT - padB);
@@ -182,7 +184,7 @@ export function LoadChart({ series }: { series: Series[] }) {
                 opacity={0.7}
               />
               <text x={padL - 8} y={yy + 4} textAnchor="end" fontSize={10} fill="var(--muted)">
-                {r.toFixed(r < 10 ? 1 : 0)}
+                {formatRps(r)}
               </text>
             </g>
           );

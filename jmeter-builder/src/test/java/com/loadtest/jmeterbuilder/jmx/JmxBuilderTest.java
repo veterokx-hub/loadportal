@@ -18,7 +18,7 @@ class JmxBuilderTest {
     private Scenario sampleScenario(TestMode mode) {
         // login использует датасет ds1 и извлекает authToken
         Request login = new Request(
-                "login", 1, "POST /login", "POST", "/login",
+                "login", 1, "POST /login", "POST", "/login", null,
                 List.of(new KeyValue("Content-Type", "application/json")),
                 List.of(),
                 new Body(BodyMode.JSON, "application/json",
@@ -35,7 +35,7 @@ class JmxBuilderTest {
         );
         // profile коррелирует с login (использует ${authToken}) -> та же группа
         Request profile = new Request(
-                "profile", 2, "GET /users/{userId}", "GET", "/users/{userId}",
+                "profile", 2, "GET /users/{userId}", "GET", "/users/{userId}", null,
                 List.of(),
                 List.of(),
                 Body.none(),
@@ -54,7 +54,7 @@ class JmxBuilderTest {
         );
         // независимый запрос -> отдельная группа
         Request search = new Request(
-                "search", 3, "GET /search", "GET", "/search",
+                "search", 3, "GET /search", "GET", "/search", null,
                 List.of(), List.of(), Body.none(), List.of(), List.of(),
                 new Intensity(50.0, 20, 120),
                 new Validation(true, 200, ""),
@@ -120,7 +120,7 @@ class JmxBuilderTest {
     @Test
     void queryParamsGoToHttpArgumentsNotPath() {
         Request req = new Request(
-                "q", 1, "GET list", "GET", "/debit-cards-work-cards/v1/activeSoftblockDebitCardList",
+                "q", 1, "GET list", "GET", "/debit-cards-work-cards/v1/activeSoftblockDebitCardList", null,
                 List.of(), List.of(), Body.none(),
                 List.of(new Param("param", ParamLocation.QUERY,
                         new ParamSource.Constant("prp"), "string", null, false)),

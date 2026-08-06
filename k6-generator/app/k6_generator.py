@@ -112,6 +112,7 @@ def _referenced_vars(req: Request) -> set[str]:
     if req.body:
         vars_ |= set(VAR_RE.findall(req.body.content or ""))
     vars_ |= set(VAR_RE.findall(req.path or ""))
+    vars_ |= set(VAR_RE.findall(req.url or ""))
     return vars_
 
 
@@ -171,22 +172,30 @@ def _group(scenario: ScenarioDraft) -> list[tuple[list[Request], list[str]]]:
 
 # --- Профиль нагрузки -> stages -----------------------------------------------------
 
-def _stages(intensity, load) -> tuple[int, list[dict]]:
+def _rate(v: float) -> float | int:
+    """k6 arrival-rate: сохраняем дробные RPS (0.01), целые без хвоста .0."""
+    r = round(float(v), 6)
+    if r == int(r):
+        return int(r)
+    return r
+
+
+def _stages(intensity, load) -> tuple[float | int, list[dict]]:
     target = max(0.0, intensity.target_rps)
     if load.test_mode == TestMode.MAX_SEARCH:
         steps = max(1, load.steps)
         dur = max(1, load.step_duration_sec)
         stages: list[dict] = []
         for i in range(1, steps + 1):
-            level = int(round(target * i / steps))
+            level = _rate(target * i / steps)
             trans = max(1, dur // 10)
             stages.append({"target": level, "duration": f"{trans}s"})
             stages.append({"target": level, "duration": f"{max(1, dur - trans)}s"})
         return 0, stages
-    r = int(round(target))
+    r = _rate(target)
     stages = []
     if intensity.ramp_up_sec > 0:
-        start = 0
+        start: float | int = 0
         stages.append({"target": r, "duration": f"{intensity.ramp_up_sec}s"})
     else:
         start = r
@@ -257,11 +266,11 @@ def _emit_request(req: Request) -> list[str]:
     L.append(f"{base_ind}{{")
     b = base_ind + "  "
     L.append(f"{b}// {_enum_str(req.method)} {req.name}")
-    L.append(f"{b}let path = {json.dumps(req.path or '/')};")
+    custom_url = (req.url or "").strip()
+    L.append(f"{b}let path = {json.dumps(custom_url or req.path or '/')};")
     for p in path_params:
-        token = "{" + p.name + "}"
         L.append(
-            f"{b}path = path.split({json.dumps(token)}).join(encodeURIComponent(String({_param_expr(p)})));"
+            f"{b}path = replaceBrace(path, {json.dumps(p.name)}, encodeURIComponent(String({_param_expr(p)})));"
         )
     L.append(f"{b}path = interp(path, vars, row);")
 
@@ -271,7 +280,11 @@ def _emit_request(req: Request) -> list[str]:
     L.append(
         f"{b}const _qs = _q.length ? '?' + _q.map(([k, v]) => k + '=' + encodeURIComponent(String(v))).join('&') : '';"
     )
-    L.append(f"{b}const url = joinUrl(BASE_URL, path) + _qs;")
+    if custom_url:
+        # собственный абсолютный URL запроса — BASE_URL не используется
+        L.append(f"{b}const url = path + _qs;")
+    else:
+        L.append(f"{b}const url = joinUrl(BASE_URL, path) + _qs;")
 
     L.append(f"{b}const headers = {{}};")
     for h in req.headers:
@@ -282,7 +295,21 @@ def _emit_request(req: Request) -> list[str]:
         L.append(f"{b}headers[{json.dumps(hp.name)}] = String({_param_expr(hp)});")
 
     if body_has:
-        L.append(f"{b}const body = interp({json.dumps(req.body.content)}, vars, row);")
+        content = req.body.content
+        body_params = [
+            p
+            for p in req.params
+            if p.location == ParamLocation.BODY and ("{" + p.name + "}") in (content or "")
+        ]
+        if body_params:
+            L.append(f"{b}let bodyTpl = {json.dumps(content)};")
+            for p in body_params:
+                L.append(
+                    f"{b}bodyTpl = replaceBrace(bodyTpl, {json.dumps(p.name)}, String({_param_expr(p)}));"
+                )
+            L.append(f"{b}const body = interp(bodyTpl, vars, row);")
+        else:
+            L.append(f"{b}const body = interp({json.dumps(content)}, vars, row);")
         if req.body.content_type:
             L.append(
                 f"{b}if (!headers['Content-Type']) headers['Content-Type'] = {json.dumps(req.body.content_type)};"
@@ -464,6 +491,22 @@ function joinUrl(base, path) {
   const b = String(base).replace(/\/+$/, '');
   const p = String(path || '');
   return b + (p.startsWith('/') ? p : '/' + p);
+}
+
+// Замена {name} -> value без затрагивания ${name} (k6/JMeter-переменных).
+function replaceBrace(tpl, name, value) {
+  const token = '{' + name + '}';
+  const s = String(tpl);
+  let out = '';
+  let i = 0;
+  for (;;) {
+    const idx = s.indexOf(token, i);
+    if (idx === -1) { out += s.slice(i); break; }
+    if (idx > 0 && s[idx - 1] === '$') { out += s.slice(i, idx + token.length); i = idx + token.length; continue; }
+    out += s.slice(i, idx) + String(value);
+    i = idx + token.length;
+  }
+  return out;
 }
 """.strip("\n")
 

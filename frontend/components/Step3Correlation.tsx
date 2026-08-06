@@ -17,7 +17,9 @@ import {
   PARAM_LOCATION_LABEL,
   bracesIn,
   consolidateRequestParams,
+  paramsFromTemplates,
   uiParams,
+  urlTemplate,
 } from "@/lib/request-params";
 
 /** Вкладки, куда можно добавлять параметры вручную. */
@@ -30,8 +32,20 @@ function sourceEmpty(src: ParamSource): boolean {
   return false;
 }
 
-function pathTemplateParam(name: string, path: string): boolean {
-  return path.includes(`{${name}}`);
+function pathTemplateParam(name: string, template: string): boolean {
+  return template.includes(`{${name}}`);
+}
+
+/** Режим тела по содержимому: пусто → none, JSON-подобное → json, иначе raw. */
+function bodyModeFor(content: string, prev?: RequestModel["body"]): RequestModel["body"] {
+  const trimmed = content.trim();
+  if (trimmed === "") {
+    return { mode: "none", content_type: prev?.content_type ?? null, content };
+  }
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    return { mode: "json", content_type: prev?.content_type || "application/json", content };
+  }
+  return { mode: "raw", content_type: prev?.content_type ?? null, content };
 }
 
 function PathHighlight({ path }: { path: string }) {
@@ -62,7 +76,8 @@ function RequestParamsEditor({
   columns: string[];
   updateRequest: (id: string, patch: Partial<RequestModel>) => void;
 }) {
-  const pathNames = useMemo(() => bracesIn(req.path ?? ""), [req.path]);
+  const template = urlTemplate(req);
+  const pathNames = useMemo(() => bracesIn(template), [template]);
   const hasPath = pathNames.length > 0;
 
   const tabs = useMemo(
@@ -104,7 +119,7 @@ function RequestParamsEditor({
     .map((p, idx) => ({ p, idx }))
     .filter(({ p }) => {
       if (p.location !== tab) return false;
-      if (tab === "path") return pathTemplateParam(p.name, req.path);
+      if (tab === "path") return pathTemplateParam(p.name, template);
       return true;
     });
 
@@ -134,6 +149,13 @@ function RequestParamsEditor({
     if (!p || p.location === "path") return;
     updateRequest(req.id, {
       params: req.params.filter((_, i) => i !== idx),
+    });
+  }
+
+  function setBodyContent(content: string) {
+    updateRequest(req.id, {
+      body: bodyModeFor(content, req.body),
+      params: paramsFromTemplates(template, content, req.params),
     });
   }
 
@@ -200,6 +222,22 @@ function RequestParamsEditor({
           </button>
         )}
       </div>
+
+      {tab === "body" && (
+        <div className="field">
+          <label>Тело запроса (Body)</label>
+          <textarea
+            style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, minHeight: 96 }}
+            placeholder={'{"login": "{username}", "password": "{password}"}'}
+            value={req.body?.content ?? ""}
+            onChange={(e) => setBodyContent(e.target.value)}
+          />
+          <div className="hint">
+            Фрагменты в <code>{"{...}"}</code> появятся ниже как параметры Body — их источник
+            настраивается так же, как у остальных параметров.
+          </div>
+        </div>
+      )}
 
       {rows.length === 0 ? (
         <div className="param-empty">
@@ -381,7 +419,7 @@ export function Step3Correlation({
         const isOpen = openIds.has(req.id);
         const visible = uiParams(req);
         const missing = missingRequired(req).length;
-        const path = req.path || "/";
+        const path = urlTemplate(req) || "/";
         return (
           <div className="request-card" key={req.id}>
             <div
