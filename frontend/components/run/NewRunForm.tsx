@@ -77,8 +77,8 @@ export function NewRunForm({
       : selectedScript?.filename ?? "script";
 
   const scenarioPath = testId.trim()
-    ? `auto_lt/${testId.trim()}/${filename}`
-    : `auto_lt/{jira}/${filename}`;
+    ? `auto_lt/${testId.trim()}/{run_id}/${filename}`
+    : `auto_lt/{jira}/{run_id}/${filename}`;
 
   const durationSec = useMemo(() => {
     if (!scenarioPreview) return 300;
@@ -172,7 +172,7 @@ export function NewRunForm({
         end_time: localInputToIso(endLocal),
         cpu: cpu.trim() || "500m",
         memory: memory.trim() || "2Gi",
-        scenario_path: `auto_lt/${testId.trim()}/${filename}`,
+        // scenario_path считает backend: auto_lt/{jira}/{portal_run_id}/{filename}
         pod_name: filename,
         repository,
       });

@@ -102,9 +102,8 @@ public class TestRunService {
         ScriptEntity script = scriptService.requireContent(scriptId, ctx.username());
 
         String testId = req.testId().trim();
-        String filename = script.getFilename();
-        String podName = firstNonBlank(req.podName(), stripPath(filename));
-        String scenarioPath = firstNonBlank(req.scenarioPath(), "auto_lt/" + testId + "/" + filename);
+        String filename = stripPath(script.getFilename());
+        String podName = firstNonBlank(req.podName(), filename);
         String repository = firstNonBlank(
                 req.repository(),
                 settings.getGitlabRepository(),
@@ -119,7 +118,6 @@ public class TestRunService {
         params.put("memory", memory);
         params.put("start_time", startTime);
         params.put("end_time", endTime);
-        params.put("scenario_path", scenarioPath);
         params.put("pod_name", podName);
         params.put("repository", repository);
         params.put("replicas", "1");
@@ -140,12 +138,21 @@ public class TestRunService {
         run.setGrafanaUrl(buildGrafanaUrl(settings, run));
         appendEvent(run, "created", "Прогон создан (test_id=" + run.getTestId() + ")");
         testRunRepository.save(run);
+
+        // Путь после save: подпапка = portal run_id, чтобы прогоны одной Jira не перетирали файл.
+        String scenarioPath = firstNonBlank(
+                req.scenarioPath(),
+                "auto_lt/" + testId + "/" + run.getId() + "/" + filename);
+        params.put("scenario_path", scenarioPath);
+        run.setParamsJson(writeJson(params));
+        testRunRepository.save(run);
+
         metrics.recordRunCreated(engine);
         metrics.recordRunStatus(TestRunStatus.QUEUED);
 
         MDC.put("run_id", run.getId().toString());
-        log.info("Created test run {} test_id={} script_id={} build_id={}",
-                run.getId(), run.getTestId(), scriptId, buildId);
+        log.info("Created test run {} test_id={} script_id={} build_id={} path={}",
+                run.getId(), run.getTestId(), scriptId, buildId, scenarioPath);
 
         try {
             uploadAndTrigger(settings, run, script, scenarioPath, podName, repository, cpu, memory,

@@ -26,7 +26,9 @@ Env fallback: `GITLAB_TRIGGER_TOKEN`, `GITLAB_UPLOAD_TOKEN`, `GITLAB_WEBHOOK_SEC
 ## Алгоритм «Запустить тест»
 
 1. Валидация: Jira (`test_id`), скрипт (сборка → сохранённый артефакт или upload), `start_time` / `end_time`.
-2. Путь: `auto_lt/{test_id}/{filename}`.
+2. Создать `run` → путь: `auto_lt/{test_id}/{portal_run_id}/{filename}`  
+   (подпапка на каждый прогон, чтобы артефакты одной Jira не перетирались).  
+   `POD_NAME` = basename файла (без пути). Явный `scenario_path` в API — override.
 3. Commit файла через Repository Files API (upload token), ветка `master`.
 4. `POST …/trigger/pipeline` с form:
    - `token`, `ref=master`
@@ -69,7 +71,8 @@ POST https://<portal-host>/api/runs/webhook/gitlab
 | `start_time`, `end_time` | да | ISO-8601 |
 | `cpu` | нет | default `500m` |
 | `memory` | нет | default `2Gi` |
-| `scenario_path`, `pod_name`, `repository` | нет | переопределения |
+| `scenario_path` | нет | override пути; иначе `auto_lt/{test_id}/{run_id}/{filename}` |
+| `pod_name`, `repository` | нет | переопределения (`pod_name` default = basename) |
 | `engine`, `scenario_name`, `target_url`, `params`, `labels` | нет | метаданные |
 
 Сценарий 3 (JSON от модуля 2): те же поля API без обязательного UI.
