@@ -104,7 +104,10 @@ function AboutDocs() {
             Первый вход: <code>admin</code> / <code>admin</code> → обязательная смена пароля
             (≥ 8 символов).
           </li>
-          <li>Сессия: Bearer на 24 ч. Черновик сценария — в localStorage браузера.</li>
+          <li>
+            Сессия: Bearer на 24 ч. Черновик сценария — в localStorage только пока сессия
+            жива; при logout / истечении сессии конструктор очищается.
+          </li>
           <li>
             <strong>ADMIN</strong>: пользователи, LDAP, GitLab CI.
           </li>

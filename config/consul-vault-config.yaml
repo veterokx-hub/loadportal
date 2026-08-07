@@ -2,7 +2,7 @@
 # consul-vault-config.yaml
 # =============================================================================
 # Единый конфиг адресов и discovery для Load Test Portal.
-# В k8s монтируется как ConfigMap в pod constructor (и при необходимости frontend).
+# В k8s монтируется как ConfigMap в pod constructor и orchestrator.
 #
 # Секреты (пароли БД, LDAP bind, bootstrap-admin, Vault token) — НЕ здесь.
 # Секреты хранятся в Vault; в k8s подставляются через External Secrets / CSI / Argo.
@@ -14,6 +14,12 @@
 # =============================================================================
 
 loadtest:
+  # TTL истории сборок (constructor BuildRetentionJob). Перекрывает defaults application.yml.
+  builds:
+    retention-days: 30
+    cleanup-enabled: true
+    cleanup-cron: "0 15 3 * * *"
+
   discovery:
     # --- Адреса Consul и Vault (сами сервисы discovery/secrets) ---
     consul:
@@ -46,6 +52,7 @@ loadtest:
 
       # Внутренние URL (constructor → workers). В k8s — Service DNS.
       constructor-url: http://localhost:8080
+      orchestrator-url: http://localhost:8082
       analyzer-url: http://localhost:8000
       k6-generator-url: http://localhost:8001
       jmeter-builder-url: http://localhost:8081

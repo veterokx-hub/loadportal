@@ -1,4 +1,4 @@
-package com.loadtest.constructor.web.dto;
+package com.loadtest.orchestrator.web.dto;
 
 public record GitLabTestConnectionResult(
         boolean ok,

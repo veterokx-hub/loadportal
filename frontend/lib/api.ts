@@ -2,8 +2,8 @@ import type { Scenario, SourceType } from "./types";
 import type { AuthSession, UserRole } from "./auth";
 import { authHeaders, clearSession } from "./auth";
 
-const BASE =
-  process.env.NEXT_PUBLIC_CORE_API_BASE_URL ?? "http://localhost:8080";
+/** Same-origin /api — Next.js rewrites на constructor / orchestrator. */
+const BASE = process.env.NEXT_PUBLIC_CORE_API_BASE_URL ?? "";
 
 /** Событие: токен протух / сессия сброшена на сервере. */
 export const AUTH_EXPIRED_EVENT = "ltp-auth-expired";
@@ -452,11 +452,14 @@ function looksGarbled(text: string): boolean {
 function statusMessage(status: number): string {
   switch (status) {
     case 401:
-      return "Требуется авторизация — войдите снова";
+      return "Неверный логин или пароль / сессия истекла";
     case 403:
       return "Недостаточно прав для этого действия";
     case 404:
       return "Ресурс не найден";
+    case 502:
+    case 503:
+      return "Сервис ещё не готов — подождите несколько секунд и обновите страницу";
     default:
       return `Ошибка сервера (HTTP ${status})`;
   }

@@ -1,4 +1,4 @@
-package com.loadtest.constructor.client;
+package com.loadtest.orchestrator.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

@@ -1,4 +1,4 @@
-package com.loadtest.constructor.config;
+package com.loadtest.orchestrator.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 

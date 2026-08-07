@@ -8,9 +8,14 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-# Пустое значение = same-origin (/api через Ingress). Локально: http://localhost:8080
-ARG NEXT_PUBLIC_CORE_API_BASE_URL=http://localhost:8080
+# Пустое значение = same-origin (/api через Next rewrites → constructor/orchestrator).
+ARG NEXT_PUBLIC_CORE_API_BASE_URL=
 ENV NEXT_PUBLIC_CORE_API_BASE_URL=$NEXT_PUBLIC_CORE_API_BASE_URL
+# Destinations для rewrites (next.config.mjs читает при `npm run build`).
+ARG CONSTRUCTOR_API_URL=http://constructor:8080
+ARG ORCHESTRATOR_API_URL=http://orchestrator:8082
+ENV CONSTRUCTOR_API_URL=$CONSTRUCTOR_API_URL
+ENV ORCHESTRATOR_API_URL=$ORCHESTRATOR_API_URL
 RUN npm run build
 
 FROM node:20-alpine AS runner

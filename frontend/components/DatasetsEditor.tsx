@@ -68,10 +68,18 @@ export function DatasetsEditor({
     patch(d.id, { columns: columns.length ? columns : d.columns, rows });
   }
 
-  async function upload(d: Dataset, file: File) {
+  async function upload(d: Dataset, file: File, input: HTMLInputElement) {
     const text = await file.text();
-    setData(d, text);
-    if (!d.file_name) patch(d.id, { file_name: slug(d.name) });
+    const { columns, rows } = parse(text);
+    setTexts((t) => ({ ...t, [d.id]: text }));
+    // Один patch: иначе второй вызов затрёт columns/rows устаревшим datasets.
+    patch(d.id, {
+      columns: columns.length ? columns : d.columns,
+      rows,
+      file_name: file.name?.trim() || d.file_name || slug(d.name),
+    });
+    // Сброс input — иначе браузер не шлёт change при повторном выборе того же файла.
+    input.value = "";
   }
 
   return (
@@ -108,7 +116,10 @@ export function DatasetsEditor({
                 <input
                   type="file"
                   accept=".csv,text/csv,text/plain"
-                  onChange={(e) => e.target.files?.[0] && upload(d, e.target.files[0])}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void upload(d, file, e.target);
+                  }}
                 />
               </div>
               <div className="field" style={{ flex: "none", width: 200 }}>

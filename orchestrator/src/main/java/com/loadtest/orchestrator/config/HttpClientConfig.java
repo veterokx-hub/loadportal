@@ -1,4 +1,4 @@
-package com.loadtest.constructor.config;
+package com.loadtest.orchestrator.config;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -14,7 +14,7 @@ import java.time.Duration;
  *
  * <p>Каждый экземпляр {@link HttpClient} держит собственный пул соединений, поэтому клиент
  * создаётся один раз на приложение и переиспользуется всеми вызовами: соединения к
- * analyzer / k6-generator / jmeter-builder / Consul / Vault живут между запросами
+ * analyzer / k6-generator / jmeter-builder / Consul / Vault / GitLab живут между запросами
  * (keep-alive). Раньше каждый класс поднимал свой пул, а часть из них ещё и пересобирала
  * {@code RestClient} на каждый вызов.
  *
@@ -30,7 +30,7 @@ import java.time.Duration;
 public class HttpClientConfig {
 
     /**
-     * Клиент для рабочих вызовов: анализ спеки, генерация артефактов, Consul, Vault.
+     * Клиент для рабочих вызовов: анализ спеки, генерация артефактов, Consul, Vault, GitLab.
      * Базовый URL не задаётся: адреса резолвятся динамически (Consul / настройки портала),
      * поэтому вызывающий код передаёт абсолютный URL.
      */

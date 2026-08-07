@@ -71,8 +71,6 @@ services:
       K6_GENERATOR_BASE_URL: http://k6-generator:8001
       JMETER_BUILDER_BASE_URL: http://jmeter-builder:8081
       LOADTEST_CONSUL_VAULT_CONFIG: /config/consul-vault-config.yaml
-      GITLAB_TRIGGER_TOKEN: ${GITLAB_TRIGGER_TOKEN:-}
-      GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-}
     volumes:
       - ./config/consul-vault-config.local.yaml:/config/consul-vault-config.yaml:ro
     ports:
@@ -84,12 +82,44 @@ services:
       retries: 15
       start_period: 60s
 
-  frontend:
-    build: ./frontend
+  orchestrator:
+    build: ./orchestrator
     depends_on:
-      - constructor
+      postgres:
+        condition: service_healthy
+      constructor:
+        condition: service_started
     environment:
-      NEXT_PUBLIC_CORE_API_BASE_URL: http://localhost:8080
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/loadtest
+      SPRING_DATASOURCE_USERNAME: loadtest
+      SPRING_DATASOURCE_PASSWORD: loadtest
+      LOADTEST_CONSUL_VAULT_CONFIG: /config/consul-vault-config.yaml
+      GITLAB_TRIGGER_TOKEN: ${GITLAB_TRIGGER_TOKEN:-}
+      GITLAB_UPLOAD_TOKEN: ${GITLAB_UPLOAD_TOKEN:-}
+      GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-}
+    volumes:
+      - ./config/consul-vault-config.local.yaml:/config/consul-vault-config.yaml:ro
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8082'"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_CORE_API_BASE_URL: ""
+        CONSTRUCTOR_API_URL: http://constructor:8080
+        ORCHESTRATOR_API_URL: http://orchestrator:8082
+    depends_on:
+      constructor:
+        condition: service_healthy
+      orchestrator:
+        condition: service_healthy
     ports:
       - "3000:3000"
     healthcheck:

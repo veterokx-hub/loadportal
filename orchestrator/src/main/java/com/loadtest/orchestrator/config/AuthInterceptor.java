@@ -1,7 +1,7 @@
-package com.loadtest.constructor.config;
+package com.loadtest.orchestrator.config;
 
-import com.loadtest.constructor.security.AuthContext;
-import com.loadtest.constructor.service.AuthService;
+import com.loadtest.orchestrator.security.AuthContext;
+import com.loadtest.orchestrator.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.MediaType;
@@ -29,6 +29,9 @@ public class AuthInterceptor implements HandlerInterceptor {
         }
         String path = request.getRequestURI();
         if (path.startsWith("/api/auth/login")) {
+            return true;
+        }
+        if (path.startsWith("/api/runs/webhook/")) {
             return true;
         }
         String token = extractToken(request);

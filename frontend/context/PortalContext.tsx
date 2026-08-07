@@ -25,6 +25,15 @@ import {
 
 const STATE_KEY = "ltp-state-v1";
 
+/** Черновик конструктора живёт только в рамках живой сессии. */
+function clearWorkspaceStorage() {
+  try {
+    localStorage.removeItem(STATE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 function normalizeScenario(s: Scenario): Scenario {
   const seen = new Set<string>();
   const withIds = s.requests.map((r, i) => {
@@ -107,34 +116,53 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [passwordOk, setPasswordOk] = useState(false);
 
+  const resetWorkspace = useCallback(() => {
+    setScenarioState(null);
+    setMaxReached(0);
+    setDocsOpen(false);
+    setSettingsOpen(false);
+    setPasswordOk(false);
+    clearWorkspaceStorage();
+  }, []);
+
   useEffect(() => {
     const t = (localStorage.getItem("ltp-theme") as "dark" | "light") || "dark";
     setTheme(t);
     document.documentElement.setAttribute("data-theme", t);
 
-    try {
-      const raw = localStorage.getItem(STATE_KEY);
-      if (raw) {
-        const st = JSON.parse(raw);
-        if (st.scenario) setScenarioState(normalizeScenario(st.scenario));
-        if (typeof st.maxReached === "number") setMaxReached(st.maxReached);
-        // миграция со старого step → maxReached
-        if (typeof st.step === "number" && typeof st.maxReached !== "number") {
-          setMaxReached(st.step);
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-
     (async () => {
       if (!isAuthenticated()) {
+        clearWorkspaceStorage();
         setAuthed(false);
         setHydrated(true);
         return;
       }
       const ok = await validateSession();
-      setAuthed(ok);
+      if (!ok) {
+        // 401 очищает token через AUTH_EXPIRED; сеть может вернуть false без сброса.
+        if (!isAuthenticated()) {
+          clearWorkspaceStorage();
+          setScenarioState(null);
+          setMaxReached(0);
+        }
+        setAuthed(false);
+        setHydrated(true);
+        return;
+      }
+      try {
+        const raw = localStorage.getItem(STATE_KEY);
+        if (raw) {
+          const st = JSON.parse(raw);
+          if (st.scenario) setScenarioState(normalizeScenario(st.scenario));
+          if (typeof st.maxReached === "number") setMaxReached(st.maxReached);
+          if (typeof st.step === "number" && typeof st.maxReached !== "number") {
+            setMaxReached(st.step);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      setAuthed(true);
       setHydrated(true);
     })();
   }, []);
@@ -142,15 +170,16 @@ export function PortalProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     function onExpired() {
       setAuthed(false);
+      resetWorkspace();
     }
     window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
-  }, []);
+  }, [resetWorkspace]);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !authed) return;
     localStorage.setItem(STATE_KEY, JSON.stringify({ scenario, maxReached }));
-  }, [scenario, maxReached, hydrated]);
+  }, [scenario, maxReached, hydrated, authed]);
 
   const setScenario = useCallback((s: Scenario | null) => {
     setScenarioState(s ? normalizeScenario(s) : null);
@@ -191,9 +220,8 @@ export function PortalProvider({ children }: { children: ReactNode }) {
     await logoutApi();
     clearSession();
     setAuthed(false);
-    setScenarioState(null);
-    setMaxReached(0);
-  }, []);
+    resetWorkspace();
+  }, [resetWorkspace]);
 
   const value = useMemo<PortalContextValue>(
     () => ({

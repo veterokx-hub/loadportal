@@ -3,6 +3,11 @@
 # Секреты (пароли) — только Vault, не в этом файле.
 
 loadtest:
+  builds:
+    retention-days: 30
+    cleanup-enabled: true
+    cleanup-cron: "0 15 3 * * *"
+
   discovery:
     consul:
       enabled: false
@@ -23,9 +28,10 @@ loadtest:
       kv-path: secret/data/loadtest/portal
 
     modules:
-      # Локально браузер ходит на host-порт constructor
-      frontend-api-base-url: http://localhost:8080
+      # Браузер → frontend (same-origin /api), Next проксирует на сервисы
+      frontend-api-base-url: ""
       constructor-url: http://constructor:8080
+      orchestrator-url: http://orchestrator:8082
       analyzer-url: http://analyzer:8000
       k6-generator-url: http://k6-generator:8001
       jmeter-builder-url: http://jmeter-builder:8081

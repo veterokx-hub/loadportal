@@ -13,7 +13,7 @@
 
 ## 1. `constructor` (Java)
 
-Оркестратор портала: API для frontend, генерация через соседние модули, прогоны, auth, настройки.
+Auth, сценарий/сборка, история, LDAP/users, Liquibase. Прогоны вынесены в `orchestrator`.
 
 ```mermaid
 classDiagram
@@ -31,13 +31,10 @@ classDiagram
     +POST /api/build/k6
     +GET /api/builds
     +GET /api/builds/{id}/scenario
+    +DELETE /api/builds/{id}
     +GET|POST /api/scripts
     +GET /api/scripts/{id}/download
-    +POST|GET /api/runs
-    +GET /api/runs/{id}
-    +POST /api/runs/webhook/gitlab
     +GET|PUT /api/settings/ldap
-    +GET|PUT|POST /api/settings/gitlab*
     +CRUD /api/users
     +GET /health|/ready|/metrics
   }
@@ -47,10 +44,7 @@ classDiagram
   class BuildController
   class BuildHistoryController
   class ScriptController
-  class TestRunController
-  class GitLabWebhookController
   class PortalSettingsController
-  class GitLabSettingsController
   class UserController
   class HealthController
 
@@ -59,9 +53,7 @@ classDiagram
   class LdapAuthService
   class BuildHistoryService
   class ScriptService
-  class TestRunService
   class PortalSettingsService
-  class GitLabSettingsService
   class ModuleEndpoints
   class PortalMetrics
   class DatabaseMetrics
@@ -69,7 +61,6 @@ classDiagram
   class AnalyzerClient
   class JmeterBuilderClient
   class K6GeneratorClient
-  class GitLabClient
 
   class SecretResolver {
     <<interface>>
@@ -101,10 +92,6 @@ classDiagram
     <<external>>
     POST /generate/k6
   }
-  class Ext_GitLab {
-    <<external>>
-    GET /api/v4/projects/{id}
-  }
   class Ext_Vault {
     <<external>>
     GET /v1/{kv}/data/{path}
@@ -128,10 +115,7 @@ classDiagram
   API_In --> BuildController
   API_In --> BuildHistoryController
   API_In --> ScriptController
-  API_In --> TestRunController
-  API_In --> GitLabWebhookController
   API_In --> PortalSettingsController
-  API_In --> GitLabSettingsController
   API_In --> UserController
   API_In --> HealthController
 
@@ -144,11 +128,7 @@ classDiagram
   BuildController --> PortalMetrics
   BuildHistoryController --> BuildHistoryService
   ScriptController --> ScriptService
-  TestRunController --> TestRunService
-  GitLabWebhookController --> TestRunService
-  GitLabWebhookController --> PortalMetrics
   PortalSettingsController --> PortalSettingsService
-  GitLabSettingsController --> GitLabSettingsService
   UserController --> UserService
   HealthController --> ModuleEndpoints
 
@@ -160,14 +140,6 @@ classDiagram
   BuildHistoryService --> BuildRecordRepository
   ScriptService --> ScriptRepository
   ScriptService --> PortalMetrics
-  TestRunService --> TestRunRepository
-  TestRunService --> BuildRecordRepository
-  TestRunService --> ScriptService
-  TestRunService --> GitLabSettingsService
-  TestRunService --> PortalMetrics
-  GitLabSettingsService --> PortalSettingsRepository
-  GitLabSettingsService --> GitLabClient
-  GitLabSettingsService --> SecretResolver
   PortalSettingsService --> PortalSettingsRepository
   ModuleEndpoints --> DiscoveryConfig
   DatabaseMetrics --> BuildRecordRepository
@@ -184,14 +156,12 @@ classDiagram
   HttpClientConfig ..> AnalyzerClient : sharedRestClient
   HttpClientConfig ..> JmeterBuilderClient
   HttpClientConfig ..> K6GeneratorClient
-  HttpClientConfig ..> GitLabClient
   HttpClientConfig ..> VaultSecretResolver
   AuthInterceptor --> AuthService
 
   AnalyzerClient --> Ext_Analyzer
   JmeterBuilderClient --> Ext_JmeterBuilder
   K6GeneratorClient --> Ext_K6Generator
-  GitLabClient --> Ext_GitLab
   VaultSecretResolver --> Ext_Vault
   ModuleEndpoints --> Ext_Consul
   LdapAuthService --> Ext_LDAP
@@ -199,6 +169,104 @@ classDiagram
   BuildRecordRepository --> Ext_Postgres
   ScriptRepository --> Ext_Postgres
   TestRunRepository --> Ext_Postgres
+  PortalSettingsRepository --> Ext_Postgres
+```
+
+---
+
+## 1b. `orchestrator` (Java)
+
+Модуль «Запуск»: GitLab trigger/upload, webhook, настройки GitLab. Общая Postgres и `auth_sessions` с constructor.
+
+```mermaid
+classDiagram
+  direction LR
+
+  class API_In {
+    <<boundary>>
+    +POST|GET /api/runs
+    +GET /api/runs/{id}
+    +POST /api/runs/webhook/gitlab
+    +GET|PUT|POST /api/settings/gitlab*
+    +GET /health|/ready|/metrics
+  }
+
+  class TestRunController
+  class GitLabWebhookController
+  class GitLabSettingsController
+  class HealthController
+
+  class AuthService
+  class TestRunService
+  class GitLabSettingsService
+  class PortalSettingsService
+  class ScriptService
+  class PortalMetrics
+
+  class GitLabClient
+
+  class SecretResolver {
+    <<interface>>
+  }
+  class CompositeSecretResolver
+  class EnvSecretResolver
+  class VaultSecretResolver
+
+  class AuthSessionRepository
+  class UserRepository
+  class TestRunRepository
+  class BuildRecordRepository
+  class ScriptRepository
+  class PortalSettingsRepository
+
+  class AuthInterceptor
+  class DiscoveryConfig
+
+  class Ext_GitLab {
+    <<external>>
+    Repository Files + trigger pipeline
+  }
+  class Ext_Vault {
+    <<external>>
+    GET /v1/{kv}/data/{path}
+  }
+  class Ext_Postgres {
+    <<external>>
+    JDBC shared DB
+  }
+
+  API_In --> TestRunController
+  API_In --> GitLabWebhookController
+  API_In --> GitLabSettingsController
+  API_In --> HealthController
+
+  TestRunController --> TestRunService
+  GitLabWebhookController --> TestRunService
+  GitLabWebhookController --> PortalMetrics
+  GitLabSettingsController --> GitLabSettingsService
+  AuthInterceptor --> AuthService
+
+  AuthService --> AuthSessionRepository
+  AuthService --> UserRepository
+  TestRunService --> TestRunRepository
+  TestRunService --> BuildRecordRepository
+  TestRunService --> ScriptService
+  TestRunService --> GitLabSettingsService
+  TestRunService --> PortalMetrics
+  ScriptService --> ScriptRepository
+  GitLabSettingsService --> PortalSettingsService
+  GitLabSettingsService --> GitLabClient
+  GitLabSettingsService --> SecretResolver
+  PortalSettingsService --> PortalSettingsRepository
+
+  CompositeSecretResolver ..|> SecretResolver
+  CompositeSecretResolver --> EnvSecretResolver
+  CompositeSecretResolver --> VaultSecretResolver
+
+  GitLabClient --> Ext_GitLab
+  VaultSecretResolver --> Ext_Vault
+  TestRunRepository --> Ext_Postgres
+  AuthSessionRepository --> Ext_Postgres
   PortalSettingsRepository --> Ext_Postgres
 ```
 
@@ -423,15 +491,17 @@ classDiagram
 
 | Модуль | Входящие ручки (рабочие) | Исходящие вызовы |
 |---|---|---|
-| **constructor** | `/api/*`, `/health`, `/ready`, `/metrics` | analyzer, jmeter-builder, k6-generator, GitLab, Vault, Consul, Postgres, LDAP |
+| **constructor** | auth/builds/scripts/users/ldap, `/health`, `/ready`, `/metrics` | analyzer, jmeter-builder, k6-generator, Vault, Consul, Postgres, LDAP |
+| **orchestrator** | `/api/runs*`, `/api/settings/gitlab*`, `/health`, `/ready`, `/metrics` | GitLab, Vault, Postgres (общая) |
 | **jmeter-builder** | `POST /generate/jmeter` | — (только ответ caller) |
 | **analyzer** | `POST /analyze` | HTTP GET к URL спеки (если передан `url`) |
 | **k6-generator** | `POST /generate/k6` | — (только ответ caller) |
 
-Цепочка сборки:
+Цепочка:
 
 ```
-frontend → constructor → analyzer | jmeter-builder | k6-generator
+frontend → /api → constructor → analyzer | jmeter-builder | k6-generator
+         ↘ /api/runs|gitlab → orchestrator → GitLab
                               ↓
-                         Postgres (builds / scripts / runs)
+                         Postgres (общая)
 ```

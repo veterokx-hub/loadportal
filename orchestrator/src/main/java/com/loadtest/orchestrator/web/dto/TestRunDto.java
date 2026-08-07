@@ -1,4 +1,4 @@
-package com.loadtest.constructor.web.dto;
+package com.loadtest.orchestrator.web.dto;
 
 import java.time.Instant;
 import java.util.List;

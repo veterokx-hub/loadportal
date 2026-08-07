@@ -13,6 +13,7 @@
 | Модуль | URL | Формат |
 |---|---|---|
 | constructor | http://localhost:8080/metrics | Prometheus text |
+| orchestrator | http://localhost:8082/metrics | Prometheus text |
 | jmeter-builder | http://localhost:8081/metrics | Prometheus text |
 | analyzer | http://localhost:8000/metrics | Prometheus text |
 | k6-generator | http://localhost:8001/metrics | Prometheus text |
@@ -25,14 +26,19 @@
 | `portal_artifact_size_bytes` | summary | `engine` | Аномально большие артефакты |
 | `portal_scripts_saved_total` | counter | `engine`, `source` | Сколько скриптов сохраняют (build/upload) |
 | `portal_script_size_bytes` | summary | `engine`, `source` | Размер сохранённых скриптов |
-| `portal_runs_created_total` | counter | `engine` | Темп создания прогонов |
-| `portal_runs_status_total` | counter | `status` | Переходы статусов (queued/running/…) |
 | `portal_auth_logins_total` | counter | `method`, `result` | Успешные/неуспешные логины |
-| `portal_gitlab_webhooks_total` | counter | `result` | accepted / unknown_pipeline / rejected |
 | `portal_builds_stored` | gauge | — | Размер истории сборок |
 | `portal_scripts_stored` | gauge | — | Число скриптов в БД |
-| `portal_runs_stored` | gauge | — | Всего прогонов |
+| `portal_runs_stored` | gauge | — | Всего прогонов (gauge по общей БД) |
 | `portal_runs_active` | gauge | — | queued + running |
+
+## Доменные метрики orchestrator
+
+| Метрика | Тип | Теги | Зачем |
+|---|---|---|---|
+| `portal_runs_created_total` | counter | `engine` | Темп создания прогонов |
+| `portal_runs_status_total` | counter | `status` | Переходы статусов (queued/running/…) |
+| `portal_gitlab_webhooks_total` | counter | `result` | accepted / unknown_pipeline / rejected |
 
 Плюс стандартные `http_server_requests_*`, `http_client_requests_*`, JVM.
 

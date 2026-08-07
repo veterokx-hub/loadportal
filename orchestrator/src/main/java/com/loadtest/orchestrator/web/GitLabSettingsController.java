@@ -1,10 +1,10 @@
-package com.loadtest.constructor.web;
+package com.loadtest.orchestrator.web;
 
-import com.loadtest.constructor.config.AuthInterceptor;
-import com.loadtest.constructor.service.GitLabSettingsService;
-import com.loadtest.constructor.web.dto.GitLabRunDefaultsDto;
-import com.loadtest.constructor.web.dto.GitLabSettingsDto;
-import com.loadtest.constructor.web.dto.GitLabTestConnectionResult;
+import com.loadtest.orchestrator.config.AuthInterceptor;
+import com.loadtest.orchestrator.service.GitLabSettingsService;
+import com.loadtest.orchestrator.web.dto.GitLabRunDefaultsDto;
+import com.loadtest.orchestrator.web.dto.GitLabSettingsDto;
+import com.loadtest.orchestrator.web.dto.GitLabTestConnectionResult;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.*;
 

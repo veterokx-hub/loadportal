@@ -1,9 +1,9 @@
-package com.loadtest.constructor.web;
+package com.loadtest.orchestrator.web;
 
-import com.loadtest.constructor.config.AuthInterceptor;
-import com.loadtest.constructor.service.TestRunService;
-import com.loadtest.constructor.web.dto.CreateTestRunRequest;
-import com.loadtest.constructor.web.dto.TestRunDto;
+import com.loadtest.orchestrator.config.AuthInterceptor;
+import com.loadtest.orchestrator.service.TestRunService;
+import com.loadtest.orchestrator.web.dto.CreateTestRunRequest;
+import com.loadtest.orchestrator.web.dto.TestRunDto;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.*;
 

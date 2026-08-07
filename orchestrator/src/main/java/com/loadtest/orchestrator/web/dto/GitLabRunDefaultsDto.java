@@ -1,4 +1,4 @@
-package com.loadtest.constructor.web.dto;
+package com.loadtest.orchestrator.web.dto;
 
 /** Публичные для авторизованных пользователей значения, нужные на экране запуска. */
 public record GitLabRunDefaultsDto(

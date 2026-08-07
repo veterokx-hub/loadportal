@@ -1,10 +1,10 @@
-package com.loadtest.constructor.service;
+package com.loadtest.orchestrator.service;
 
-import com.loadtest.constructor.client.GitLabClient;
-import com.loadtest.constructor.persistence.PortalSettingsEntity;
-import com.loadtest.constructor.web.dto.GitLabRunDefaultsDto;
-import com.loadtest.constructor.web.dto.GitLabSettingsDto;
-import com.loadtest.constructor.web.dto.GitLabTestConnectionResult;
+import com.loadtest.orchestrator.client.GitLabClient;
+import com.loadtest.orchestrator.persistence.PortalSettingsEntity;
+import com.loadtest.orchestrator.web.dto.GitLabRunDefaultsDto;
+import com.loadtest.orchestrator.web.dto.GitLabSettingsDto;
+import com.loadtest.orchestrator.web.dto.GitLabTestConnectionResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;

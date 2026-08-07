@@ -23,8 +23,9 @@
 
 | Сервис | Порт | Стек | Назначение |
 |---|---:|---|---|
-| `frontend` | 3000 | Next.js 14 / React 18 | UI портала |
-| `constructor` | 8080 | Java 17 / Spring Boot 3.3 | Auth, orchestration, история, runs |
+| `frontend` | 3000 | Next.js 14 / React 18 | UI портала; same-origin `/api` + rewrites |
+| `constructor` | 8080 | Java 17 / Spring Boot 3.3 | Auth, сценарий, история, Liquibase |
+| `orchestrator` | 8082 | Java 17 / Spring Boot 3.3 | Запуск прогонов, GitLab CI, webhook |
 | `jmeter-builder` | 8081 | Java 17 / Spring Boot 3.3 | Scenario → `.jmx` |
 | `analyzer` | 8000 | Python 3.12 / FastAPI | OpenAPI/Postman → Scenario |
 | `k6-generator` | 8001 | Python 3.12 / FastAPI | Scenario → k6 |
@@ -34,13 +35,15 @@
 ваша внешняя VictoriaMetrics / Prometheus. См. [`docs/metrics.md`](docs/metrics.md).
 
 ```
-Browser ──► Ingress
-              /      → frontend
-              /api    → constructor
-                          ├─► jmeter-builder
-                          ├─► analyzer
-                          ├─► k6-generator
-                          └─► PostgreSQL
+Browser ──► frontend (:3000)
+              /           → UI
+              /api/runs*  → orchestrator (:8082)
+              /api/settings/gitlab* → orchestrator
+              /api/*      → constructor (:8080)
+                              ├─► jmeter-builder
+                              ├─► analyzer
+                              ├─► k6-generator
+                              └─► PostgreSQL (общая с orchestrator)
 ```
 
 Адреса модулей, Consul и Vault — в **`config/consul-vault-config.yaml`** (ConfigMap).  
@@ -71,6 +74,9 @@ Browser ──► Ingress
 Перед заменой сценария («Новый сценарий», подтягивание старой сборки) UI предлагает
 сохранить текущую сборку. Сохранение доступно даже при замечаниях в «Пульсе сценария».
 
+История сборок: до 30 на пользователя; TTL-cron в constructor (`loadtest.builds.*` в ConfigMap):
+`retention-days`, `cleanup-enabled`, `cleanup-cron` (по умолчанию ежедневно в 03:15).
+
 ### Запуск (частично)
 
 `/run/new` — создать прогон из сохранённой сборки или загруженного скрипта.  
@@ -86,13 +92,14 @@ docker compose up --build
 
 | URL | Описание |
 |---|---|
-| http://localhost:3000 | Портал |
+| http://localhost:3000 | Портал (API через `/api` proxy) |
 | http://localhost:8080 | constructor |
+| http://localhost:8082 | orchestrator |
 | http://localhost:8081/ready | jmeter-builder |
 | http://localhost:8000/docs | analyzer (OpenAPI) |
 | http://localhost:8001/docs | k6-generator (OpenAPI) |
 
-Локальный конфиг: `config/consul-vault-config.local.yaml` (монтируется в constructor).  
+Локальный конфиг: `config/consul-vault-config.local.yaml` (монтируется в constructor и orchestrator).  
 Эталон для k8s ConfigMap: `config/consul-vault-config.yaml`.
 
 Первый вход: `admin` / `admin` → обязательная смена пароля.
@@ -105,20 +112,22 @@ export GITLAB_WEBHOOK_SECRET=...
 docker compose up --build
 ```
 
-## Критично: frontend + пустой API base (same-origin)
+## Frontend: same-origin `/api` + rewrites
 
-`NEXT_PUBLIC_CORE_API_BASE_URL` вшивается в JS **на этапе `npm run build`**, не в runtime.
+`NEXT_PUBLIC_CORE_API_BASE_URL` вшивается в JS **на этапе `npm run build`**.  
+Пустая строка (по умолчанию в compose/Dockerfile) = браузер ходит на `/api/...` того же host.
 
-| Сборка | Значение | Поведение браузера |
-|---|---|---|
-| Локально (compose) | `http://localhost:8080` | Прямой вызов constructor |
-| **k8s / Ingress** | **пустая строка `""`** | Запросы на `/api/...` того же host |
+Next.js (`next.config.mjs`) на build-time прописывает destinations:
 
-Если собрать frontend с `localhost:8080` и выкатить в k8s — UI «жив», а API «молчит»
-(браузер бьёт в localhost пользователя). Для Argo/prod: **пересобирать образ frontend
-с пустым `NEXT_PUBLIC_CORE_API_BASE_URL`**.
+| Путь | Сервис |
+|---|---|
+| `/api/runs/*`, `/api/settings/gitlab*` | `ORCHESTRATOR_API_URL` (compose: `http://orchestrator:8082`) |
+| остальные `/api/*` | `CONSTRUCTOR_API_URL` (compose: `http://constructor:8080`) |
 
-В `consul-vault-config.yaml` поле `modules.frontend-api-base-url: ""` отражает тот же принцип.
+В k8s/Ingress достаточно проксировать `/` на frontend; разделение constructor/orchestrator делает Next.  
+Либо Ingress может слать webhook напрямую на orchestrator.
+
+В `consul-vault-config.yaml`: `modules.frontend-api-base-url: ""`, `modules.orchestrator-url`.
 
 ## Bootstrap admin
 
@@ -154,6 +163,7 @@ Job должен завершиться успешно до старта Deploym
 |---|---|---|
 | frontend | `GET /` | `GET /` |
 | constructor | `GET /health` | `GET /ready` (или `/ready/strict`) |
+| orchestrator | `GET /health` | `GET /ready` |
 | jmeter-builder | `GET /health` | `GET /ready` |
 | analyzer | `GET /health` | `GET /ready` |
 | k6-generator | `GET /health` | `GET /ready` |
@@ -173,8 +183,9 @@ SSL/CA в модулях **не используются** (analyzer ходит 
 
 ```
 loadtest-portal/
-├── frontend/          # Next.js UI
-├── constructor/       # Spring: auth, orchestration, Liquibase
+├── frontend/          # Next.js UI + /api rewrites
+├── constructor/       # Spring: auth, сценарий, история, Liquibase
+├── orchestrator/      # Spring: runs, GitLab, webhook
 ├── jmeter-builder/    # Scenario → JMX
 ├── analyzer/          # OpenAPI/Postman → Scenario
 ├── k6-generator/      # Scenario → k6
@@ -185,9 +196,12 @@ loadtest-portal/
 └── docker-compose.yml
 ```
 
-## API (constructor)
+## API
 
-Auth: Bearer на `/api/**`, кроме `POST /api/auth/login` и `POST /api/runs/webhook/gitlab`.  
+Публичные пути те же (`/api/...`). Backend: constructor или orchestrator (см. proxy выше).
+
+Auth (constructor): Bearer на `/api/**`, кроме `POST /api/auth/login`.  
+Webhook (orchestrator): `POST /api/runs/webhook/gitlab` без Bearer (`X-Gitlab-Token`).  
 При `must_change_password` разрешены только смена пароля и logout.
 
 ### Auth
@@ -219,7 +233,7 @@ Auth: Bearer на `/api/**`, кроме `POST /api/auth/login` и `POST /api/run
 | POST | `/api/scripts/upload` | Upload `.jmx` / `.js` |
 | GET | `/api/scripts/{id}/download` | Скачать сохранённый артефакт |
 
-### Прогоны
+### Прогоны (orchestrator)
 
 | Метод | Путь | Описание |
 |---|---|---|
@@ -230,16 +244,16 @@ Auth: Bearer на `/api/**`, кроме `POST /api/auth/login` и `POST /api/run
 
 ### Пользователи и настройки (admin)
 
-| Метод | Путь | Описание |
-|---|---|---|
-| GET | `/api/users` | Список пользователей |
-| POST | `/api/users` | Создать пользователя |
-| PUT | `/api/users/{username}/password` | Сменить пароль пользователя |
-| DELETE | `/api/users/{username}` | Удалить пользователя |
-| GET/PUT | `/api/settings/ldap` | LDAP |
-| GET/PUT | `/api/settings/gitlab` | GitLab CI + Grafana (admin; токены в UI) |
-| GET | `/api/settings/gitlab/defaults` | REPOSITORY для формы запуска |
-| POST | `/api/settings/gitlab/test` | Проверка соединения с GitLab |
+| Метод | Путь | Сервис | Описание |
+|---|---|---|---|
+| GET | `/api/users` | constructor | Список пользователей |
+| POST | `/api/users` | constructor | Создать пользователя |
+| PUT | `/api/users/{username}/password` | constructor | Сменить пароль пользователя |
+| DELETE | `/api/users/{username}` | constructor | Удалить пользователя |
+| GET/PUT | `/api/settings/ldap` | constructor | LDAP |
+| GET/PUT | `/api/settings/gitlab` | orchestrator | GitLab CI + Grafana (токены в UI) |
+| GET | `/api/settings/gitlab/defaults` | orchestrator | REPOSITORY для формы запуска |
+| POST | `/api/settings/gitlab/test` | orchestrator | Проверка соединения с GitLab |
 
 ### Служебные
 

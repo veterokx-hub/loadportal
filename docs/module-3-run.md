@@ -2,6 +2,11 @@
 
 Создание прогона (`run_id`): заливка скрипта в Git → trigger GitLab pipeline → статусы по **webhook**.
 
+Сервис: **`orchestrator`** (порт **8082**). Общая Postgres и те же Bearer-сессии, что у `constructor`.  
+Frontend ходит на same-origin `/api/...`; Next.js проксирует `/api/runs*` и `/api/settings/gitlab*` на orchestrator, остальное — на constructor.
+
+Liquibase и запись сборок/скриптов остаются в constructor; orchestrator только читает `scripts` / `build_records` и пишет `test_runs` / настройки GitLab в `portal_settings`.
+
 ## Настройки (admin)
 
 Раздел **Настройки → GitLab CI**:
@@ -41,9 +46,13 @@ Env fallback: `GITLAB_TRIGGER_TOKEN`, `GITLAB_UPLOAD_TOKEN`, `GITLAB_WEBHOOK_SEC
 
 ## Webhook GitLab
 
+Через Ingress / frontend proxy (рекомендуется):
+
 ```
 POST https://<portal-host>/api/runs/webhook/gitlab
 ```
+
+Либо напрямую в orchestrator: `http://orchestrator:8082/api/runs/webhook/gitlab`.
 
 - Заголовок: `X-Gitlab-Token` = webhook secret из настроек
 - События: **Pipeline events**
@@ -57,7 +66,6 @@ POST https://<portal-host>/api/runs/webhook/gitlab
 | POST | `/api/runs` | Залить скрипт + trigger + создать TestRun |
 | GET | `/api/runs` | Список (свои; admin — все) |
 | GET | `/api/runs/{id}` | Карточка прогона |
-| DELETE | `/api/builds/{id}` | Удалить сборку (+ связанный `portal_build` скрипт) |
 | GET/PUT | `/api/settings/gitlab` | Настройки GitLab (admin) |
 | GET | `/api/settings/gitlab/defaults` | REPOSITORY для формы запуска |
 | POST | `/api/settings/gitlab/test` | Проверка соединения |
