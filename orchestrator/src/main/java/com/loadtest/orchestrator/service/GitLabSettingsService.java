@@ -16,6 +16,7 @@ import java.util.Optional;
 public class GitLabSettingsService {
 
     private static final Logger log = LoggerFactory.getLogger(GitLabSettingsService.class);
+    private static final String DEFAULT_REPOSITORY = "lt-ump";
 
     private final PortalSettingsService portalSettingsService;
     private final GitLabClient gitLabClient;
@@ -32,56 +33,54 @@ public class GitLabSettingsService {
     }
 
     public GitLabRunDefaultsDto getRunDefaults() {
-        PortalSettingsEntity e = portalSettingsService.loadEntity();
-        String repo = nullToEmpty(e.getGitlabRepository()).isBlank() ? "lt-ump" : e.getGitlabRepository().trim();
-        boolean configured = !nullToEmpty(e.getGitlabBaseUrl()).isBlank()
-                && !nullToEmpty(e.getGitlabProjectId()).isBlank()
-                && resolveTriggerToken(e).isPresent()
-                && resolveUploadToken(e).isPresent();
+        PortalSettingsEntity settings = portalSettingsService.loadEntity();
+        String repo = TextSupport.firstNonBlank(settings.getGitlabRepository(), DEFAULT_REPOSITORY);
+        boolean configured = hasText(settings.getGitlabBaseUrl())
+                && hasText(settings.getGitlabProjectId())
+                && resolveTriggerToken(settings).isPresent()
+                && resolveUploadToken(settings).isPresent();
         return new GitLabRunDefaultsDto(repo, configured);
     }
 
     @Transactional
     public GitLabSettingsDto saveGitLab(GitLabSettingsDto dto) {
-        PortalSettingsEntity e = portalSettingsService.loadEntity();
-        e.setGitlabBaseUrl(nullToEmpty(dto.gitlabBaseUrl()));
-        e.setGitlabProjectId(nullToEmpty(dto.gitlabProjectId()));
-        e.setGitlabRepository(nullToEmpty(dto.gitlabRepository()).isBlank()
-                ? "lt-ump"
-                : dto.gitlabRepository().trim());
-        e.setGitlabTriggerRef("master");
+        PortalSettingsEntity entity = portalSettingsService.loadEntity();
+        entity.setGitlabBaseUrl(TextSupport.nullToEmpty(dto.gitlabBaseUrl()));
+        entity.setGitlabProjectId(TextSupport.nullToEmpty(dto.gitlabProjectId()));
+        entity.setGitlabRepository(TextSupport.firstNonBlank(dto.gitlabRepository(), DEFAULT_REPOSITORY));
+        entity.setGitlabTriggerRef("master");
         if (dto.gitlabTriggerToken() != null) {
-            e.setGitlabTriggerToken(dto.gitlabTriggerToken().trim());
+            entity.setGitlabTriggerToken(dto.gitlabTriggerToken().trim());
         }
         if (dto.gitlabUploadToken() != null) {
-            e.setGitlabUploadToken(dto.gitlabUploadToken().trim());
+            entity.setGitlabUploadToken(dto.gitlabUploadToken().trim());
         }
         if (dto.gitlabWebhookSecret() != null) {
-            e.setGitlabWebhookSecret(dto.gitlabWebhookSecret().trim());
+            entity.setGitlabWebhookSecret(dto.gitlabWebhookSecret().trim());
         }
-        e.setGrafanaBaseUrl(nullToEmpty(dto.grafanaBaseUrl()));
-        e.setGrafanaDashboardTemplate(nullToEmpty(dto.grafanaDashboardTemplate()));
-        portalSettingsService.saveEntity(e);
-        return toDto(e);
+        entity.setGrafanaBaseUrl(TextSupport.nullToEmpty(dto.grafanaBaseUrl()));
+        entity.setGrafanaDashboardTemplate(TextSupport.nullToEmpty(dto.grafanaDashboardTemplate()));
+        portalSettingsService.saveEntity(entity);
+        return toDto(entity);
     }
 
     public GitLabTestConnectionResult testConnection() {
         PortalSettingsEntity settings = portalSettingsService.loadEntity();
-        if (settings.getGitlabBaseUrl() == null || settings.getGitlabBaseUrl().isBlank()) {
-            return new GitLabTestConnectionResult(false, "Укажите GitLab base URL", null, null);
+        if (!hasText(settings.getGitlabBaseUrl())) {
+            return failure("Укажите GitLab base URL");
         }
-        if (settings.getGitlabProjectId() == null || settings.getGitlabProjectId().isBlank()) {
-            return new GitLabTestConnectionResult(false, "Укажите Project ID или path", null, null);
+        if (!hasText(settings.getGitlabProjectId())) {
+            return failure("Укажите Project ID или path");
         }
-        Optional<String> token = resolveUploadToken(settings);
+
+        Optional<String> token = resolveUploadToken(settings).or(() -> resolveTriggerToken(settings));
         if (token.isEmpty()) {
-            token = resolveTriggerToken(settings);
-        }
-        if (token.isEmpty()) {
-            String msg = "Задайте upload token или trigger token в настройках (или GITLAB_UPLOAD_TOKEN / GITLAB_TRIGGER_TOKEN)";
+            String msg = "Задайте upload token или trigger token в настройках "
+                    + "(или GITLAB_UPLOAD_TOKEN / GITLAB_TRIGGER_TOKEN)";
             log.warn("GitLab connection test failed: {}", msg);
-            return new GitLabTestConnectionResult(false, msg, null, null);
+            return failure(msg);
         }
+
         try {
             GitLabClient.ProjectInfo project = gitLabClient.getProject(
                     settings.getGitlabBaseUrl(),
@@ -95,55 +94,55 @@ public class GitLabSettingsService {
                     project.pathWithNamespace());
         } catch (IllegalArgumentException ex) {
             log.warn("GitLab connection test failed: {}", ex.getMessage());
-            return new GitLabTestConnectionResult(false, ex.getMessage(), null, null);
+            return failure(ex.getMessage());
         }
     }
 
     public Optional<String> resolveTriggerToken(PortalSettingsEntity settings) {
-        String stored = nullToEmpty(settings.getGitlabTriggerToken());
-        if (!stored.isBlank()) {
-            return Optional.of(stored);
-        }
-        return optionalEnv("GITLAB_TRIGGER_TOKEN");
+        return resolveSecret(settings.getGitlabTriggerToken(), "GITLAB_TRIGGER_TOKEN");
     }
 
     public Optional<String> resolveUploadToken(PortalSettingsEntity settings) {
-        String stored = nullToEmpty(settings.getGitlabUploadToken());
-        if (!stored.isBlank()) {
-            return Optional.of(stored);
-        }
-        return optionalEnv("GITLAB_UPLOAD_TOKEN");
+        return resolveSecret(settings.getGitlabUploadToken(), "GITLAB_UPLOAD_TOKEN");
     }
 
     public Optional<String> resolveWebhookSecret(PortalSettingsEntity settings) {
-        String stored = nullToEmpty(settings.getGitlabWebhookSecret());
-        if (!stored.isBlank()) {
-            return Optional.of(stored);
-        }
-        return optionalEnv("GITLAB_WEBHOOK_SECRET");
+        return resolveSecret(settings.getGitlabWebhookSecret(), "GITLAB_WEBHOOK_SECRET");
     }
 
-    private static GitLabSettingsDto toDto(PortalSettingsEntity e) {
+    private static Optional<String> resolveSecret(String stored, String envName) {
+        String value = TextSupport.nullToEmpty(stored).trim();
+        if (!value.isEmpty()) {
+            return Optional.of(value);
+        }
+        return optionalEnv(envName);
+    }
+
+    private static GitLabSettingsDto toDto(PortalSettingsEntity entity) {
         return new GitLabSettingsDto(
-                e.getGitlabBaseUrl(),
-                e.getGitlabProjectId(),
-                e.getGitlabRepository(),
-                e.getGitlabTriggerToken(),
-                e.getGitlabUploadToken(),
-                e.getGitlabWebhookSecret(),
-                e.getGrafanaBaseUrl(),
-                e.getGrafanaDashboardTemplate());
+                entity.getGitlabBaseUrl(),
+                entity.getGitlabProjectId(),
+                entity.getGitlabRepository(),
+                entity.getGitlabTriggerToken(),
+                entity.getGitlabUploadToken(),
+                entity.getGitlabWebhookSecret(),
+                entity.getGrafanaBaseUrl(),
+                entity.getGrafanaDashboardTemplate());
     }
 
     private static Optional<String> optionalEnv(String name) {
-        String v = System.getenv(name);
-        if (v == null || v.isBlank()) {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank()) {
             return Optional.empty();
         }
-        return Optional.of(v.trim());
+        return Optional.of(value.trim());
     }
 
-    private static String nullToEmpty(String s) {
-        return s == null ? "" : s;
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static GitLabTestConnectionResult failure(String message) {
+        return new GitLabTestConnectionResult(false, message, null, null);
     }
 }

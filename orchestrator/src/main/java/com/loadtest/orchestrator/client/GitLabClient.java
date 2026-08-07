@@ -25,40 +25,28 @@ public class GitLabClient {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
 
-    /**
-     * RestClient общий на приложение (см. HttpClientConfig): у него заданы таймауты,
-     * без которых недоступный GitLab держал бы поток до победного.
-     */
     public GitLabClient(ObjectMapper objectMapper, @Qualifier("sharedRestClient") RestClient restClient) {
         this.objectMapper = objectMapper;
         this.restClient = restClient;
     }
 
+    /** GET /projects/:id — проверка доступа и существования проекта. */
     public ProjectInfo getProject(String baseUrl, String token, String projectIdOrPath) {
-        String encoded = encodeProjectId(projectIdOrPath);
-        String url = normalizeBase(baseUrl) + "/api/v4/projects/" + encoded;
-        try {
-            String body = restClient.get()
+        String url = projectApiBase(baseUrl, projectIdOrPath);
+        return execute("проект GitLab", () -> {
+            JsonNode node = readJson(restClient.get()
                     .uri(url)
                     .header("PRIVATE-TOKEN", token)
                     .retrieve()
-                    .body(String.class);
-            JsonNode node = objectMapper.readTree(body);
+                    .body(String.class));
             return new ProjectInfo(
                     node.path("id").asLong(),
                     node.path("path_with_namespace").asText(projectIdOrPath),
-                    node.path("web_url").asText("")
-            );
-        } catch (HttpStatusCodeException ex) {
-            throw mapHttpError(ex, "проект GitLab");
-        } catch (Exception ex) {
-            throw new IllegalArgumentException("GitLab недоступен: " + ex.getMessage());
-        }
+                    node.path("web_url").asText(""));
+        });
     }
 
-    /**
-     * Создаёт или обновляет файл в репозитории (ветка {@link #DEFAULT_REF}).
-     */
+    /** Создаёт или обновляет файл в ветке {@link #DEFAULT_REF}. */
     public void upsertFile(
             String baseUrl,
             String privateToken,
@@ -66,86 +54,66 @@ public class GitLabClient {
             String filePath,
             byte[] content,
             String commitMessage) {
-        if (content == null) {
+        if (content == null || content.length == 0) {
             throw new IllegalArgumentException("Пустое содержимое скрипта");
         }
-        String encodedProject = encodeProjectId(projectIdOrPath);
-        String encodedPath = URLEncoder.encode(filePath, StandardCharsets.UTF_8)
-                .replace("+", "%20");
-        String fileUrl = normalizeBase(baseUrl) + "/api/v4/projects/" + encodedProject
-                + "/repository/files/" + encodedPath;
+        String fileUrl = projectApiBase(baseUrl, projectIdOrPath)
+                + "/repository/files/"
+                + urlEncodePath(filePath);
         boolean exists = fileExists(fileUrl, privateToken);
-        String b64 = Base64.getEncoder().encodeToString(content);
+
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("branch", DEFAULT_REF);
-        payload.put("content", b64);
+        payload.put("content", Base64.getEncoder().encodeToString(content));
         payload.put("encoding", "base64");
-        payload.put("commit_message", commitMessage == null || commitMessage.isBlank()
-                ? "portal: upload " + filePath
-                : commitMessage);
-        try {
-            if (exists) {
-                restClient.put()
-                        .uri(fileUrl)
-                        .header("PRIVATE-TOKEN", privateToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(payload)
-                        .retrieve()
-                        .toBodilessEntity();
-            } else {
-                restClient.post()
-                        .uri(fileUrl)
-                        .header("PRIVATE-TOKEN", privateToken)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(payload)
-                        .retrieve()
-                        .toBodilessEntity();
-            }
-        } catch (HttpStatusCodeException ex) {
-            throw mapHttpError(ex, exists ? "обновлении файла" : "создании файла");
-        } catch (Exception ex) {
-            throw new IllegalArgumentException("GitLab: не удалось залить файл: " + ex.getMessage());
-        }
+        payload.put("commit_message",
+                (commitMessage == null || commitMessage.isBlank())
+                        ? "portal: upload " + filePath
+                        : commitMessage);
+
+        String action = exists ? "обновлении файла" : "создании файла";
+        execute(action, () -> {
+            var spec = exists
+                    ? restClient.put().uri(fileUrl)
+                    : restClient.post().uri(fileUrl);
+            spec.header("PRIVATE-TOKEN", privateToken)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(payload)
+                    .retrieve()
+                    .toBodilessEntity();
+            return null;
+        });
     }
 
-    /**
-     * Trigger Pipeline API (form-urlencoded).
-     */
+    /** Trigger Pipeline API (form-urlencoded), ref = {@link #DEFAULT_REF}. */
     public TriggerResult triggerPipeline(
             String baseUrl,
             String projectIdOrPath,
             String triggerToken,
             Map<String, String> variables) {
-        String encodedProject = encodeProjectId(projectIdOrPath);
-        String url = normalizeBase(baseUrl) + "/api/v4/projects/" + encodedProject + "/trigger/pipeline";
+        String url = projectApiBase(baseUrl, projectIdOrPath) + "/trigger/pipeline";
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("token", triggerToken);
         form.add("ref", DEFAULT_REF);
         if (variables != null) {
-            for (Map.Entry<String, String> e : variables.entrySet()) {
-                if (e.getKey() == null || e.getKey().isBlank()) {
-                    continue;
-                }
-                form.add("variables[" + e.getKey() + "]", e.getValue() == null ? "" : e.getValue());
-            }
+            variables.entrySet().stream()
+                    .filter(e -> e.getKey() != null && !e.getKey().isBlank())
+                    .forEach(e -> form.add(
+                            "variables[" + e.getKey() + "]",
+                            e.getValue() == null ? "" : e.getValue()));
         }
-        try {
-            String body = restClient.post()
+        return execute("trigger pipeline", () -> {
+            JsonNode node = readJson(restClient.post()
                     .uri(url)
                     .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                     .body(form)
                     .retrieve()
-                    .body(String.class);
-            JsonNode node = objectMapper.readTree(body);
+                    .body(String.class));
             return new TriggerResult(
                     node.path("id").asLong(),
                     node.path("web_url").asText(""),
                     node.path("status").asText("pending"));
-        } catch (HttpStatusCodeException ex) {
-            throw mapHttpError(ex, "trigger pipeline");
-        } catch (Exception ex) {
-            throw new IllegalArgumentException("GitLab trigger недоступен: " + ex.getMessage());
-        }
+        });
     }
 
     private boolean fileExists(String fileUrl, String privateToken) {
@@ -165,11 +133,38 @@ public class GitLabClient {
         }
     }
 
+    private JsonNode readJson(String body) throws Exception {
+        return objectMapper.readTree(body == null ? "{}" : body);
+    }
+
+    private <T> T execute(String action, SupplierWithException<T> call) {
+        try {
+            return call.get();
+        } catch (HttpStatusCodeException ex) {
+            throw mapHttpError(ex, action);
+        } catch (IllegalArgumentException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalArgumentException("GitLab недоступен при " + action + ": " + ex.getMessage());
+        }
+    }
+
+    private static String projectApiBase(String baseUrl, String projectIdOrPath) {
+        return normalizeBase(baseUrl) + "/api/v4/projects/" + encodeProjectId(projectIdOrPath);
+    }
+
     private static String encodeProjectId(String projectIdOrPath) {
+        if (projectIdOrPath == null || projectIdOrPath.isBlank()) {
+            throw new IllegalArgumentException("GitLab project ID не задан");
+        }
         if (projectIdOrPath.matches("\\d+")) {
             return projectIdOrPath;
         }
         return URLEncoder.encode(projectIdOrPath, StandardCharsets.UTF_8);
+    }
+
+    private static String urlEncodePath(String filePath) {
+        return URLEncoder.encode(filePath, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private static String normalizeBase(String baseUrl) {
@@ -192,6 +187,11 @@ public class GitLabClient {
             case 404 -> new IllegalArgumentException("GitLab: не найдено (404) при " + action + suffix);
             default -> new IllegalArgumentException("GitLab HTTP " + code + " при " + action + suffix);
         };
+    }
+
+    @FunctionalInterface
+    private interface SupplierWithException<T> {
+        T get() throws Exception;
     }
 
     public record ProjectInfo(long id, String pathWithNamespace, String webUrl) {

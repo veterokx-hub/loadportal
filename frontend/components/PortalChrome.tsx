@@ -34,7 +34,14 @@ export function PortalChrome({ children }: { children: React.ReactNode }) {
     admin,
   } = usePortal();
 
-  if (!hydrated) return null;
+  if (!hydrated) {
+    return (
+      <div className="boot-splash" role="status" aria-live="polite" aria-busy="true">
+        <span className="boot-splash-mark" aria-hidden />
+        <span className="boot-splash-text">Загрузка портала…</span>
+      </div>
+    );
+  }
 
   if (!authed) {
     return <LoginScreen onLogin={handleLogin} />;
@@ -88,25 +95,53 @@ export function PortalChrome({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <div className="inline topbar-actions">
-          <button className="btn-toolbar" onClick={() => setDocsOpen(true)} title="Документация">
-            <span className="btn-toolbar-icon">?</span>
+          <button
+            type="button"
+            className="btn-toolbar"
+            onClick={() => setDocsOpen(true)}
+            title="Документация"
+            aria-label="Открыть документацию"
+          >
+            <span className="btn-toolbar-icon" aria-hidden>
+              ?
+            </span>
             <span className="btn-toolbar-label">Документация</span>
           </button>
           {admin && (
             <button
+              type="button"
               className="btn-toolbar btn-toolbar-icon-only"
               onClick={() => setSettingsOpen(true)}
               title="Настройки портала"
+              aria-label="Настройки портала"
             >
-              <span className="btn-toolbar-icon">⚙</span>
+              <span className="btn-toolbar-icon" aria-hidden>
+                ⚙
+              </span>
             </button>
           )}
-          <button className="btn-toolbar" onClick={toggleTheme} title="Сменить тему">
-            <span className="btn-toolbar-icon">{theme === "dark" ? "☀" : "☾"}</span>
+          <button
+            type="button"
+            className="btn-toolbar"
+            onClick={toggleTheme}
+            title="Сменить тему"
+            aria-label={theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему"}
+          >
+            <span className="btn-toolbar-icon" aria-hidden>
+              {theme === "dark" ? "☀" : "☾"}
+            </span>
             <span className="btn-toolbar-label">{theme === "dark" ? "Светлая" : "Тёмная"}</span>
           </button>
-          <button className="btn-toolbar btn-toolbar-muted" onClick={logout} title="Выйти">
-            <span className="btn-toolbar-icon">⎋</span>
+          <button
+            type="button"
+            className="btn-toolbar btn-toolbar-muted"
+            onClick={logout}
+            title="Выйти"
+            aria-label="Выйти из портала"
+          >
+            <span className="btn-toolbar-icon" aria-hidden>
+              ⎋
+            </span>
             <span className="btn-toolbar-label">Выйти</span>
           </button>
         </div>

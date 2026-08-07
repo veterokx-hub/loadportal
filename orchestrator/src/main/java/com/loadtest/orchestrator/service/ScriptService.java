@@ -4,6 +4,7 @@ import com.loadtest.orchestrator.persistence.ScriptEntity;
 import com.loadtest.orchestrator.persistence.ScriptRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /** Чтение скриптов из общей БД (запись — в constructor). */
@@ -33,7 +34,7 @@ public class ScriptService {
         return entity;
     }
 
-    public ScriptEntity findLatestForBuild(UUID buildId) {
-        return scriptRepository.findFirstByBuildIdOrderByCreatedAtDesc(buildId).orElse(null);
+    public Optional<ScriptEntity> findLatestForBuild(UUID buildId) {
+        return scriptRepository.findFirstByBuildIdOrderByCreatedAtDesc(buildId);
     }
 }

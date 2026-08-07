@@ -20,4 +20,11 @@ public enum TestRunStatus {
             default -> QUEUED;
         };
     }
+
+    public boolean isTerminal() {
+        return switch (this) {
+            case SUCCEEDED, FAILED, CANCELED -> true;
+            case QUEUED, RUNNING -> false;
+        };
+    }
 }

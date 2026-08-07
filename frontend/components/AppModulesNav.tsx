@@ -24,11 +24,18 @@ export function AppModulesNav({
                 m.available ? "" : "soon"
               }`}
               aria-current={isActive ? "page" : undefined}
+              aria-disabled={!m.available ? true : undefined}
               title={m.available ? m.title : `${m.title} — скоро`}
             >
-              <span className="module-tab-num">{i + 1}</span>
+              <span className="module-tab-num" aria-hidden>
+                {i + 1}
+              </span>
               <span className="module-tab-label">{m.nav}</span>
-              {!m.available && <span className="module-tab-soon">скоро</span>}
+              {!m.available && (
+                <span className="module-tab-soon" aria-label="раздел скоро">
+                  скоро
+                </span>
+              )}
             </Link>
           );
         })}

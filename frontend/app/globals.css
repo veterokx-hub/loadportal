@@ -11,7 +11,7 @@
   --surface: #1a1f2e;
   --border: #3a4460;
   --text: #eef2fc;
-  --muted: #93a0c0;
+  --muted: #a4b0cf;
   --accent: #6b8aff;
   --accent-2: #c06bff;
   --neon: #3ee8e0;
@@ -41,9 +41,14 @@
   --nm-in: inset 5px 5px 12px var(--sh-dark), inset -4px -4px 10px var(--sh-light);
   --nm-in-sm: inset 3px 3px 7px var(--sh-dark), inset -2px -2px 6px var(--sh-light);
 
+  /* Motion: GPU-friendly (transform/opacity), soft exit curves */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
   --t: 0.2s var(--ease);
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  --t-fast: 0.14s var(--ease-soft);
+  --t-slow: 0.45s var(--ease);
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 :root[data-theme="light"] {
@@ -54,7 +59,7 @@
   --surface: #f3f5fc;
   --border: #b8c2dc;
   --text: #1e2440;
-  --muted: #5c6688;
+  --muted: #4f5a7a;
   --accent: #4f63e0;
   --accent-2: #9b4fd8;
   --neon: #0a9fb8;
@@ -180,6 +185,13 @@ a:hover {
   background: var(--surface);
   box-shadow: var(--nm-out-sm), var(--glow);
   border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  transition: transform var(--t), box-shadow var(--t);
+  will-change: transform;
+}
+
+.topbar .brand:hover .mark {
+  transform: translateY(-1px) scale(1.04);
+  box-shadow: var(--nm-out-sm), var(--glow), var(--glow-neon);
 }
 
 .topbar h1 {
@@ -288,6 +300,7 @@ a:hover {
 }
 
 .module-tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -307,21 +320,42 @@ a:hover {
   cursor: pointer;
   box-shadow: none;
   text-decoration: none;
-  transition: background var(--t), color var(--t), box-shadow var(--t);
+  transition: background var(--t), color var(--t), box-shadow var(--t), transform var(--t-fast);
 }
 
 .module-tab:hover:not(:disabled) {
   color: var(--text);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   filter: none;
-  transform: none;
+  transform: translateY(-1px);
   box-shadow: none;
+}
+
+.module-tab:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  color: var(--text);
 }
 
 .module-tab.active {
   color: var(--text);
   background: var(--surface);
   box-shadow: var(--nm-out-sm);
+  transform: none;
+}
+
+.module-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: 4px;
+  height: 2px;
+  border-radius: 99px;
+  background: var(--accent-grad);
+  opacity: 0.9;
+  transform: scaleX(1);
+  animation: tab-ink 0.35s var(--ease) both;
 }
 
 .module-tab.soon:not(.active) {
@@ -778,11 +812,16 @@ textarea:disabled {
 
 /* ——— Кнопки ——— */
 button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
+  overflow: hidden;
+  isolation: isolate;
   background: var(--accent-grad);
+  background-size: 140% 140%;
+  background-position: 0% 50%;
   color: #fff;
   border: none;
   border-radius: var(--radius-sm);
@@ -795,13 +834,20 @@ button {
   text-transform: none;
   cursor: pointer;
   box-shadow: var(--nm-out-sm);
-  transition: transform var(--t), box-shadow var(--t), filter var(--t);
+  transition:
+    transform var(--t),
+    box-shadow var(--t),
+    filter var(--t),
+    background-position var(--t-slow),
+    opacity var(--t);
+  will-change: transform;
 }
 
 button:hover:not(:disabled) {
   filter: brightness(1.06);
   box-shadow: var(--nm-out-sm), var(--glow);
   transform: translateY(-1px);
+  background-position: 100% 50%;
 }
 
 button:active:not(:disabled) {
@@ -821,6 +867,31 @@ button:disabled {
   transform: none;
   filter: none;
   box-shadow: var(--nm-out-sm);
+}
+
+button.btn-block {
+  width: 100%;
+  margin-top: 6px;
+}
+
+button.is-loading {
+  opacity: 0.92;
+  cursor: progress;
+  pointer-events: none;
+}
+
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, #fff 35%, transparent);
+  border-top-color: #fff;
+  animation: spin 0.7s linear infinite;
+  flex: none;
+}
+
+.btn-label {
+  transition: opacity var(--t-fast);
 }
 
 button.ghost {
@@ -1397,7 +1468,7 @@ code {
   box-shadow: var(--glow);
 }
 
-/* ——— Экран входа ——— */
+/* ——— Экран входа (glass + micro-motion) ——— */
 .login-wrap {
   min-height: 100vh;
   display: flex;
@@ -1408,29 +1479,294 @@ code {
   overflow: hidden;
 }
 
-.login-glow {
+.login-atmosphere {
   position: absolute;
-  width: 420px;
-  height: 420px;
-  border-radius: 50%;
-  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 25%, transparent), transparent 70%);
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -55%);
+  inset: 0;
   pointer-events: none;
+  overflow: hidden;
+}
+
+.login-orb {
+  position: absolute;
+  border-radius: 50%;
   filter: blur(2px);
+  will-change: transform;
+  animation: orb-drift 14s var(--ease-soft) infinite alternate;
+}
+
+.login-orb-a {
+  width: min(52vw, 440px);
+  height: min(52vw, 440px);
+  top: 28%;
+  left: 28%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 28%, transparent), transparent 70%);
+}
+
+.login-orb-b {
+  width: min(36vw, 280px);
+  height: min(36vw, 280px);
+  top: 18%;
+  right: 8%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--neon) 18%, transparent), transparent 70%);
+  animation-duration: 18s;
+  animation-delay: -4s;
+}
+
+.login-orb-c {
+  width: min(30vw, 220px);
+  height: min(30vw, 220px);
+  bottom: 10%;
+  left: 12%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--neon-2) 14%, transparent), transparent 70%);
+  animation-duration: 16s;
+  animation-delay: -8s;
+}
+
+.login-grid {
+  position: absolute;
+  inset: -20%;
+  opacity: 0.07;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--text) 40%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--text) 40%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 55% 45% at 50% 45%, #000 20%, transparent 75%);
+  animation: grid-pan 28s linear infinite;
 }
 
 .login-card {
   width: 100%;
-  max-width: 400px;
+  max-width: 420px;
   margin: 0;
   position: relative;
   z-index: 1;
+  padding: 28px 28px 24px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  box-shadow: var(--nm-out), 0 24px 60px color-mix(in srgb, var(--sh-dark) 55%, transparent);
+  animation: card-rise 0.55s var(--ease) both;
 }
 
-.login-card h2 {
-  border-image: var(--accent-grad) 1;
+.login-card::before {
+  opacity: 0.85;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.login-mark {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  box-shadow: var(--nm-out-sm), var(--glow);
+  transition: transform var(--t), box-shadow var(--t);
+}
+
+.login-card:hover .login-mark {
+  transform: translateY(-2px) rotate(-2deg);
+  box-shadow: var(--nm-out-sm), var(--glow), var(--glow-neon);
+}
+
+.login-kicker {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.login-title {
+  margin: 2px 0 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.15;
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: var(--accent);
+  border: none !important;
+  padding: 0 !important;
+}
+
+.login-lead {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  max-width: 36ch;
+}
+
+.login-card .field label {
+  font-weight: 650;
+}
+
+.login-card .field input {
+  transition:
+    border-color var(--t),
+    box-shadow var(--t),
+    transform var(--t-fast),
+    background var(--t);
+}
+
+.login-card .field input:hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.login-card .field input:focus {
+  transform: translateY(-1px);
+}
+
+.login-error {
+  animation: shake-soft 0.42s var(--ease);
+}
+
+.login-hint {
+  text-align: center;
+  margin-top: 14px;
+  margin-bottom: 0;
+}
+
+/* Boot splash (вместо пустого экрана) */
+.boot-splash {
+  min-height: 100vh;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  color: var(--muted);
+  background: var(--bg-deep);
+}
+
+.boot-splash-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: var(--accent-grad);
+  background-size: 160% 160%;
+  box-shadow: var(--glow);
+  animation: boot-pulse 1.2s var(--ease-soft) infinite;
+}
+
+.boot-splash-text {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+@keyframes card-rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes orb-drift {
+  from {
+    transform: translate3d(-2%, -2%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(3%, 4%, 0) scale(1.06);
+  }
+}
+
+@keyframes grid-pan {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-48px, -48px, 0);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes tab-ink {
+  from {
+    transform: scaleX(0.35);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 0.9;
+  }
+}
+
+@keyframes shake-soft {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-4px);
+  }
+  40% {
+    transform: translateX(4px);
+  }
+  60% {
+    transform: translateX(-2px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+
+@keyframes boot-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    background-position: 0% 50%;
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.06);
+    background-position: 100% 50%;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .login-orb,
+  .login-grid,
+  .boot-splash-mark {
+    animation: none !important;
+  }
+
+  .login-card {
+    animation: none !important;
+  }
 }
 
 .group-card > .head {
