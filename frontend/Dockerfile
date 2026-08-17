@@ -22,11 +22,21 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-# Без HOSTNAME standalone-сервер слушает только IPv6 — healthcheck/probe по 127.0.0.1 падает.
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
-COPY --from=build /app/public ./public
-COPY --from=build /app/.next/standalone ./
-COPY --from=build /app/.next/static ./.next/static
+ENV HOME=/tmp
+
+RUN addgroup -S -g 888 app \
+    && adduser -S -u 888 -G app -H -h /tmp -s /sbin/nologin app
+
+COPY --from=build --chown=root:root /app/public ./public
+COPY --from=build --chown=root:root /app/.next/standalone ./
+COPY --from=build --chown=root:root /app/.next/static ./.next/static
+
+# Next пишет image/fetch cache сюда; исходники остаются root/read-only.
+RUN mkdir -p /app/.next/cache \
+    && chown 888:888 /app/.next/cache
+
+USER 888:888
 EXPOSE 3000
 CMD ["node", "server.js"]

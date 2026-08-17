@@ -4,13 +4,18 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    APP_PORT=8000
+    APP_PORT=8000 \
+    HOME=/tmp
 
-COPY requirements.txt .
+RUN groupadd --system --gid 888 app \
+    && useradd --system --uid 888 --gid 888 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin app
+
+COPY --chown=root:root --chmod=0444 requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
+COPY --chown=root:root --chmod=0555 app ./app
 
+USER 888:888
 EXPOSE 8000
 
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT}"]
