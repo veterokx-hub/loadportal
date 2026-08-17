@@ -1,5 +1,6 @@
 package com.loadtest.orchestrator.web;
 
+import com.loadtest.orchestrator.client.GitLabException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -21,6 +22,15 @@ public class ApiExceptionHandler {
         if (msg == null || msg.isBlank()) {
             msg = status.getReasonPhrase();
         }
+        return ResponseEntity.status(status).body(Map.of("error", msg));
+    }
+
+    @ExceptionHandler(GitLabException.class)
+    public ResponseEntity<Map<String, String>> handleGitLab(GitLabException ex) {
+        HttpStatus status = ex.getStatus() != null ? ex.getStatus() : HttpStatus.BAD_GATEWAY;
+        String msg = ex.getMessage() == null || ex.getMessage().isBlank()
+                ? "Ошибка GitLab"
+                : ex.getMessage();
         return ResponseEntity.status(status).body(Map.of("error", msg));
     }
 

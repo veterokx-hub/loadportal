@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { LdapSettings, PortalUser, GitLabSettings } from "@/lib/api";
 import {
   createUser,
@@ -39,6 +39,7 @@ const EMPTY_GITLAB: GitLabSettings = {
 };
 
 export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const overlayMouseDown = useRef(false);
   const [tab, setTab] = useState<SettingsTab>("users");
   const [users, setUsers] = useState<PortalUser[]>([]);
   const [ldap, setLdap] = useState<LdapSettings>(EMPTY_LDAP);
@@ -237,11 +238,16 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
   const showHint = tabHint?.tab === tab && !showError ? tabHint.message : null;
 
   return (
-    <div className="docs-overlay" onClick={onClose}>
-      <div
-        className="docs-panel panel settings-panel docs-panel-wide"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div
+      className="docs-overlay"
+      onMouseDown={(e) => {
+        overlayMouseDown.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (overlayMouseDown.current && e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="docs-panel panel settings-panel docs-panel-wide">
         <div className="docs-head">
           <h2>Настройки портала</h2>
           <button className="ghost small" onClick={onClose}>
@@ -249,6 +255,7 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
           </button>
         </div>
 
+        <div className="settings-body">
         <div className="inline" style={{ marginBottom: 16, gap: 8, flexWrap: "wrap" }}>
           {(
             [
@@ -537,6 +544,7 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
           <button className="ghost" onClick={onClose}>
             Закрыть
           </button>
+        </div>
         </div>
       </div>
     </div>

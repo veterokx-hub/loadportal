@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 type DocsSectionId =
   | "about"
@@ -463,13 +463,22 @@ function TheoryDocs() {
 }
 
 export function Documentation({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const overlayMouseDown = useRef(false);
   const [section, setSection] = useState<DocsSectionId>("about");
 
   if (!open) return null;
 
   return (
-    <div className="docs-overlay" onClick={onClose}>
-      <div className="docs-panel panel docs-panel-wide" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="docs-overlay"
+      onMouseDown={(e) => {
+        overlayMouseDown.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (overlayMouseDown.current && e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="docs-panel panel docs-panel-wide">
         <div className="docs-head">
           <div>
             <h2>Документация</h2>

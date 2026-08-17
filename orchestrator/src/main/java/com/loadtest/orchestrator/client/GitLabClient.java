@@ -3,6 +3,7 @@ package com.loadtest.orchestrator.client;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
@@ -140,12 +141,16 @@ public class GitLabClient {
     private <T> T execute(String action, SupplierWithException<T> call) {
         try {
             return call.get();
+        } catch (GitLabException ex) {
+            throw ex;
         } catch (HttpStatusCodeException ex) {
             throw mapHttpError(ex, action);
         } catch (IllegalArgumentException ex) {
             throw ex;
         } catch (Exception ex) {
-            throw new IllegalArgumentException("GitLab недоступен при " + action + ": " + ex.getMessage());
+            throw new GitLabException(
+                    HttpStatus.BAD_GATEWAY,
+                    "GitLab недоступен при " + action + ": " + ex.getMessage());
         }
     }
 
@@ -174,19 +179,25 @@ public class GitLabClient {
         return baseUrl.replaceAll("/$", "");
     }
 
-    private static IllegalArgumentException mapHttpError(HttpStatusCodeException ex, String action) {
+    private static GitLabException mapHttpError(HttpStatusCodeException ex, String action) {
         int code = ex.getStatusCode().value();
         String detail = ex.getResponseBodyAsString();
         if (detail != null && detail.length() > 200) {
             detail = detail.substring(0, 200) + "…";
         }
         String suffix = (detail == null || detail.isBlank()) ? "" : (": " + detail);
-        return switch (code) {
-            case 401 -> new IllegalArgumentException("GitLab: неверный token (401)" + suffix);
-            case 403 -> new IllegalArgumentException("GitLab: доступ запрещён (403) при " + action + suffix);
-            case 404 -> new IllegalArgumentException("GitLab: не найдено (404) при " + action + suffix);
-            default -> new IllegalArgumentException("GitLab HTTP " + code + " при " + action + suffix);
+        HttpStatus status = switch (code) {
+            case 401, 403 -> HttpStatus.BAD_GATEWAY;
+            case 404 -> HttpStatus.BAD_GATEWAY;
+            default -> code >= 500 ? HttpStatus.BAD_GATEWAY : HttpStatus.BAD_GATEWAY;
         };
+        String message = switch (code) {
+            case 401 -> "GitLab: неверный token (401)" + suffix;
+            case 403 -> "GitLab: доступ запрещён (403) при " + action + suffix;
+            case 404 -> "GitLab: не найдено (404) при " + action + suffix;
+            default -> "GitLab HTTP " + code + " при " + action + suffix;
+        };
+        return new GitLabException(status, message);
     }
 
     @FunctionalInterface

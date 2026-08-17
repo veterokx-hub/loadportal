@@ -112,6 +112,55 @@ function scoreLabel(score: number): string {
   return "Не готов";
 }
 
+/** Переменные, явно выбранные источником «Корреляция» (не CSV и не ${…} в теле). */
+function explicitCorrelationVars(req: RequestModel): Set<string> {
+  const vars = new Set<string>();
+  for (const p of req.params) {
+    if (p.source.kind === "correlation" && p.source.variable.trim()) {
+      vars.add(p.source.variable.trim());
+    }
+  }
+  return vars;
+}
+
+/**
+ * Число связных компонент корреляции (экстрактор → явная корреляция в параметре).
+ * Группы только по общему CSV сюда не входят.
+ */
+function countCorrelationChains(edges: FlowEdge[]): number {
+  if (edges.length === 0) return 0;
+
+  const parent = new Map<string, string>();
+  const find = (id: string): string => {
+    let cur = id;
+    if (!parent.has(cur)) parent.set(cur, cur);
+    while (parent.get(cur) !== cur) {
+      const p = parent.get(cur)!;
+      parent.set(cur, parent.get(p) ?? p);
+      cur = parent.get(cur)!;
+    }
+    return cur;
+  };
+  const union = (a: string, b: string) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+
+  edges.forEach((e) => union(e.from, e.to));
+
+  const sizes = new Map<string, number>();
+  for (const id of parent.keys()) {
+    const root = find(id);
+    sizes.set(root, (sizes.get(root) ?? 0) + 1);
+  }
+  let chains = 0;
+  for (const size of sizes.values()) {
+    if (size > 1) chains += 1;
+  }
+  return chains;
+}
+
 export function analyzeScenario(scenario: Scenario): ReadinessReport {
   const checks: ReadinessCheck[] = [];
   const requests = [...scenario.requests].sort((a, b) => a.order - b.order);
@@ -285,18 +334,18 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
     });
   }
 
-  const chainCount = groups.filter((g) => g.requests.length > 1).length;
-
-  // Поток: узлы и рёбра корреляции
+  // Поток / «цепочки»: только явный источник «Корреляция» у параметра.
+  // Общий CSV и ${col} из датасета в теле/пути цепочками не считаются.
   const edges: FlowEdge[] = [];
   requests.forEach((req) => {
-    referencedVars(req).forEach((v) => {
+    explicitCorrelationVars(req).forEach((v) => {
       const owner = allExtracted.get(v);
       if (owner && owner.reqId !== req.id) {
         edges.push({ from: owner.reqId, to: req.id, variable: v });
       }
     });
   });
+  const chainCount = countCorrelationChains(edges);
 
   const nodes: FlowNode[] = requests.map((req) => ({
     id: req.id,

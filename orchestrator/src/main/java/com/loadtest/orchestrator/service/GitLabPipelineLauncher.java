@@ -11,14 +11,17 @@ import com.loadtest.orchestrator.service.run.LaunchParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Инфраструктурный адаптер: заливка скрипта в GitLab и trigger pipeline.
- * Не знает про HTTP/DTO — только domain entities + настройки.
+ * HTTP выполняется вне txn создания прогона; результат пишется отдельной транзакцией.
  */
 @Component
 public class GitLabPipelineLauncher {
@@ -30,18 +33,21 @@ public class GitLabPipelineLauncher {
     private final TestRunRepository testRunRepository;
     private final TestRunMapper mapper;
     private final PortalMetrics metrics;
+    private final TransactionTemplate tx;
 
     public GitLabPipelineLauncher(
             GitLabClient gitLabClient,
             GitLabSettingsService gitLabSettingsService,
             TestRunRepository testRunRepository,
             TestRunMapper mapper,
-            PortalMetrics metrics) {
+            PortalMetrics metrics,
+            PlatformTransactionManager transactionManager) {
         this.gitLabClient = gitLabClient;
         this.gitLabSettingsService = gitLabSettingsService;
         this.testRunRepository = testRunRepository;
         this.mapper = mapper;
         this.metrics = metrics;
+        this.tx = new TransactionTemplate(transactionManager);
     }
 
     public void launch(
@@ -52,10 +58,10 @@ public class GitLabPipelineLauncher {
         requireConfigured(settings);
         String uploadToken = gitLabSettingsService.resolveUploadToken(settings)
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "Upload token не задан (настройки или GITLAB_UPLOAD_TOKEN)"));
+                        "Upload token не задан (настройки, Vault или GITLAB_UPLOAD_TOKEN)"));
         String triggerToken = gitLabSettingsService.resolveTriggerToken(settings)
                 .orElseThrow(() -> new IllegalArgumentException(
-                        "Trigger token не задан (настройки или GITLAB_TRIGGER_TOKEN)"));
+                        "Trigger token не задан (настройки, Vault или GITLAB_TRIGGER_TOKEN)"));
 
         String commitMsg = "portal: " + launch.testId() + " " + launch.scenarioPath();
         gitLabClient.upsertFile(
@@ -65,7 +71,6 @@ public class GitLabPipelineLauncher {
                 launch.scenarioPath(),
                 script.getContent(),
                 commitMsg);
-        mapper.appendEvent(run, "uploaded", "Скрипт залит в " + launch.scenarioPath());
         log.info("Uploaded script for run {} path={}", run.getId(), launch.scenarioPath());
 
         GitLabClient.TriggerResult trigger = gitLabClient.triggerPipeline(
@@ -73,17 +78,26 @@ public class GitLabPipelineLauncher {
                 settings.getGitlabProjectId(),
                 triggerToken,
                 pipelineVariables(run, launch));
-        run.setGitlabPipelineId(trigger.pipelineId());
-        run.setGitlabWebUrl(trigger.webUrl());
-        run.setStatus(TestRunStatus.fromGitLab(trigger.status()));
-        if (run.getStatus() == TestRunStatus.RUNNING) {
-            run.setStartedAt(Instant.now());
-        }
-        mapper.appendEvent(run, "triggered",
-                "Pipeline #" + trigger.pipelineId() + " (" + trigger.status() + ")");
-        testRunRepository.save(run);
-        metrics.recordRunStatus(run.getStatus());
+        persistTriggerResult(run.getId(), launch.scenarioPath(), trigger);
         log.info("Triggered pipeline {} for run {}", trigger.pipelineId(), run.getId());
+    }
+
+    private void persistTriggerResult(UUID runId, String scenarioPath, GitLabClient.TriggerResult trigger) {
+        tx.executeWithoutResult(status -> {
+            TestRunEntity run = testRunRepository.findById(runId)
+                    .orElseThrow(() -> new IllegalArgumentException("Прогон не найден"));
+            mapper.appendEvent(run, "uploaded", "Скрипт залит в " + scenarioPath);
+            run.setGitlabPipelineId(trigger.pipelineId());
+            run.setGitlabWebUrl(trigger.webUrl());
+            run.setStatus(TestRunStatus.fromGitLab(trigger.status()));
+            if (run.getStatus() == TestRunStatus.RUNNING) {
+                run.setStartedAt(Instant.now());
+            }
+            mapper.appendEvent(run, "triggered",
+                    "Pipeline #" + trigger.pipelineId() + " (" + trigger.status() + ")");
+            testRunRepository.save(run);
+            metrics.recordRunStatus(run.getStatus());
+        });
     }
 
     private static void requireConfigured(PortalSettingsEntity settings) {

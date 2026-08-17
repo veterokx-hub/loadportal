@@ -1262,6 +1262,14 @@ code {
   max-width: 960px;
 }
 
+/* Settings modal: header fixed, body scrolls when GitLab/LDAP forms overflow */
+.settings-panel .settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 @keyframes modal-in {
   from {
     opacity: 0;

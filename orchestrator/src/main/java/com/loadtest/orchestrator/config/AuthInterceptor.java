@@ -28,9 +28,7 @@ public class AuthInterceptor implements HandlerInterceptor {
             return true;
         }
         String path = request.getRequestURI();
-        if (path.startsWith("/api/auth/login")) {
-            return true;
-        }
+        // Login живёт в constructor; orchestrator пропускает только webhook (свой секрет).
         if (path.startsWith("/api/runs/webhook/")) {
             return true;
         }

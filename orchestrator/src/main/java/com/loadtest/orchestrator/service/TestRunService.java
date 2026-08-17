@@ -1,5 +1,6 @@
 package com.loadtest.orchestrator.service;
 
+import com.loadtest.orchestrator.client.GitLabException;
 import com.loadtest.orchestrator.metrics.PortalMetrics;
 import com.loadtest.orchestrator.model.TestRunStatus;
 import com.loadtest.orchestrator.persistence.PortalSettingsEntity;
@@ -15,7 +16,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -25,7 +27,7 @@ import java.util.UUID;
 
 /**
  * Application service: оркестрация создания/чтения прогонов.
- * Валидация, резолв скрипта, GitLab launch и webhook вынесены в отдельные компоненты (SRP).
+ * HTTP к GitLab выполняется вне транзакции БД.
  */
 @Service
 public class TestRunService {
@@ -37,30 +39,30 @@ public class TestRunService {
 
     private final TestRunRepository testRunRepository;
     private final PortalSettingsService portalSettingsService;
-    private final CreateTestRunValidator validator;
     private final ScriptSourceResolver scriptSourceResolver;
     private final GitLabPipelineLauncher pipelineLauncher;
     private final TestRunMapper mapper;
     private final JsonSupport json;
     private final PortalMetrics metrics;
+    private final TransactionTemplate tx;
 
     public TestRunService(
             TestRunRepository testRunRepository,
             PortalSettingsService portalSettingsService,
-            CreateTestRunValidator validator,
             ScriptSourceResolver scriptSourceResolver,
             GitLabPipelineLauncher pipelineLauncher,
             TestRunMapper mapper,
             JsonSupport json,
-            PortalMetrics metrics) {
+            PortalMetrics metrics,
+            PlatformTransactionManager transactionManager) {
         this.testRunRepository = testRunRepository;
         this.portalSettingsService = portalSettingsService;
-        this.validator = validator;
         this.scriptSourceResolver = scriptSourceResolver;
         this.pipelineLauncher = pipelineLauncher;
         this.mapper = mapper;
         this.json = json;
         this.metrics = metrics;
+        this.tx = new TransactionTemplate(transactionManager);
     }
 
     public List<TestRunDto> listRuns(AuthContext ctx) {
@@ -83,37 +85,47 @@ public class TestRunService {
      * Создаёт прогон, заливает скрипт и триггерит pipeline.
      * При ошибке GitLab прогон сохраняется со статусом {@code failed}.
      */
-    @Transactional
     public TestRunDto create(CreateTestRunRequest req, AuthContext ctx) {
-        validator.validate(req);
+        validateCreate(req);
         PortalSettingsEntity settings = portalSettingsService.loadEntity();
         ScriptSource source = scriptSourceResolver.resolve(req, ctx.username());
 
-        TestRunEntity run = persistQueuedRun(req, ctx.username(), settings, source);
-        LaunchParams launch = buildLaunchParams(req, settings, source.script(), run.getId());
-        applyLaunchParams(run, launch);
+        QueuedRun queued = tx.execute(status -> persistQueuedRun(req, ctx.username(), settings, source));
+        if (queued == null) {
+            throw new IllegalStateException("Не удалось создать прогон");
+        }
 
         metrics.recordRunCreated(source.engine());
         metrics.recordRunStatus(TestRunStatus.QUEUED);
-        MDC.put("run_id", run.getId().toString());
-        log.info("Created test run {} test_id={} script_id={} build_id={} path={}",
-                run.getId(), run.getTestId(), source.scriptId(), source.buildId(), launch.scenarioPath());
 
+        MDC.put("run_id", queued.run().getId().toString());
         try {
-            pipelineLauncher.launch(settings, run, source.script(), launch);
+            log.info("Created test run {} test_id={} script_id={} build_id={} path={}",
+                    queued.run().getId(), queued.run().getTestId(),
+                    source.scriptId(), source.buildId(), queued.launch().scenarioPath());
+            pipelineLauncher.launch(settings, queued.run(), source.script(), queued.launch());
         } catch (RuntimeException ex) {
-            markFailed(run, ex);
+            tx.executeWithoutResult(status -> markFailed(queued.run().getId(), ex));
+            log.warn("Run {} failed to start: {}", queued.run().getId(), ex.getMessage());
+            if (!(ex instanceof GitLabException) && !(ex instanceof IllegalArgumentException)) {
+                throw ex;
+            }
+        } finally {
+            MDC.remove("run_id");
         }
-        return mapper.toDto(run);
+
+        return mapper.toDto(testRunRepository.findById(queued.run().getId()).orElseThrow());
     }
 
-    private TestRunEntity persistQueuedRun(
+    private QueuedRun persistQueuedRun(
             CreateTestRunRequest req,
             String username,
             PortalSettingsEntity settings,
             ScriptSource source) {
         String testId = req.testId().trim();
+        String filename = TextSupport.stripFilename(source.script().getFilename());
         Map<String, Object> params = new LinkedHashMap<>(req.params() == null ? Map.of() : req.params());
+
         TestRunEntity run = new TestRunEntity(
                 username,
                 source.scenarioName(),
@@ -124,18 +136,23 @@ public class TestRunService {
                 source.targetUrl(),
                 json.write(params),
                 json.write(req.labels() == null ? Map.of() : req.labels()));
-        run.setGrafanaUrl(mapper.buildGrafanaUrl(settings, run));
         mapper.appendEvent(run, "created", "Прогон создан (test_id=" + testId + ")");
-        return testRunRepository.save(run);
+        run = testRunRepository.save(run);
+
+        LaunchParams launch = buildLaunchParams(req, settings, source.script(), run.getId(), testId, filename);
+        applyLaunchParams(run, launch);
+        run.setGrafanaUrl(mapper.buildGrafanaUrl(settings, run));
+        run = testRunRepository.save(run);
+        return new QueuedRun(run, launch);
     }
 
     private LaunchParams buildLaunchParams(
             CreateTestRunRequest req,
             PortalSettingsEntity settings,
             ScriptEntity script,
-            UUID runId) {
-        String testId = req.testId().trim();
-        String filename = TextSupport.stripFilename(script.getFilename());
+            UUID runId,
+            String testId,
+            String filename) {
         String scenarioPath = TextSupport.firstNonBlank(
                 req.scenarioPath(),
                 "auto_lt/" + testId + "/" + runId + "/" + filename);
@@ -161,16 +178,37 @@ public class TestRunService {
         params.put("replicas", "1");
         params.put("scenario_path", launch.scenarioPath());
         run.setParamsJson(json.write(params));
-        testRunRepository.save(run);
     }
 
-    private void markFailed(TestRunEntity run, RuntimeException ex) {
+    private void markFailed(UUID runId, RuntimeException ex) {
+        TestRunEntity run = testRunRepository.findById(runId).orElse(null);
+        if (run == null) {
+            return;
+        }
         run.setStatus(TestRunStatus.FAILED);
         run.setErrorMessage(TextSupport.truncate(ex.getMessage(), 2000));
         run.setEndedAt(Instant.now());
         mapper.appendEvent(run, "error", run.getErrorMessage());
         testRunRepository.save(run);
         metrics.recordRunStatus(TestRunStatus.FAILED);
-        log.warn("Run {} failed to start: {}", run.getId(), ex.getMessage());
+    }
+
+    private void validateCreate(CreateTestRunRequest req) {
+        if (req == null) {
+            throw new IllegalArgumentException("Тело запроса обязательно");
+        }
+        if (req.testId() == null || req.testId().isBlank()) {
+            throw new IllegalArgumentException("Укажите test_id (ключ задачичи в Jira)");
+        }
+        boolean hasBuild = req.buildId() != null && !req.buildId().isBlank();
+        boolean hasScript = req.scriptId() != null && !req.scriptId().isBlank();
+        if (!hasBuild && !hasScript) {
+            throw new IllegalArgumentException("Выберите сборку или загрузите скрипт");
+        }
+        TextSupport.requireNonBlank(req.startTime(), "start_time");
+        TextSupport.requireNonBlank(req.endTime(), "end_time");
+    }
+
+    private record QueuedRun(TestRunEntity run, LaunchParams launch) {
     }
 }

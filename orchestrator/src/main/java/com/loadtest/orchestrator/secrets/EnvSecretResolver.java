@@ -5,7 +5,8 @@ import org.springframework.stereotype.Component;
 import java.util.Optional;
 
 /**
- * Локальная разработка: секреты из env (GITLAB_TRIGGER_TOKEN, GITLAB_WEBHOOK_SECRET).
+ * Локальная разработка / fallback: секреты из env.
+ * {@code resolve(path)} сначала ищет env с именем {@code path}, затем известные GitLab-ключи.
  */
 @Component
 public class EnvSecretResolver implements SecretResolver {
@@ -20,11 +21,14 @@ public class EnvSecretResolver implements SecretResolver {
             return Optional.of(direct.trim());
         }
         String lower = vaultPath.toLowerCase();
-        if (lower.contains("trigger") || lower.contains("token")) {
-            return optionalEnv("GITLAB_TRIGGER_TOKEN");
+        if (lower.contains("upload")) {
+            return optionalEnv("GITLAB_UPLOAD_TOKEN");
         }
         if (lower.contains("webhook") || lower.contains("secret")) {
             return optionalEnv("GITLAB_WEBHOOK_SECRET");
+        }
+        if (lower.contains("trigger") || lower.contains("token")) {
+            return optionalEnv("GITLAB_TRIGGER_TOKEN");
         }
         return Optional.empty();
     }

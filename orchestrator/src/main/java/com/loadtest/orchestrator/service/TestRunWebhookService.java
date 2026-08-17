@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
@@ -48,9 +49,7 @@ public class TestRunWebhookService {
             log.warn("Webhook secret not configured — rejecting");
             return false;
         }
-        byte[] left = expected.get().getBytes(StandardCharsets.UTF_8);
-        byte[] right = TextSupport.nullToEmpty(providedSecret).getBytes(StandardCharsets.UTF_8);
-        return MessageDigest.isEqual(left, right);
+        return secretsEqual(expected.get(), TextSupport.nullToEmpty(providedSecret));
     }
 
     @Transactional
@@ -65,30 +64,53 @@ public class TestRunWebhookService {
 
         TestRunEntity run = found.get();
         MDC.put("run_id", run.getId().toString());
-        TestRunStatus newStatus = TestRunStatus.fromGitLab(gitlabStatus);
-        if (run.getStatus() == newStatus && Objects.equals(run.getGitlabWebUrl(), webUrl)) {
-            metrics.recordGitLabWebhook("accepted");
-            return;
-        }
+        try {
+            if (pipelineId != null && run.getGitlabPipelineId() == null) {
+                run.setGitlabPipelineId(pipelineId);
+            }
+            TestRunStatus newStatus = TestRunStatus.fromGitLab(gitlabStatus);
+            if (run.getStatus() == newStatus && Objects.equals(run.getGitlabWebUrl(), webUrl)) {
+                metrics.recordGitLabWebhook("accepted");
+                return;
+            }
 
-        applyStatusTransition(run, newStatus, webUrl);
-        mapper.appendEvent(run, "status", gitlabStatus + " → " + newStatus.name());
-        testRunRepository.save(run);
-        metrics.recordRunStatus(newStatus);
-        metrics.recordGitLabWebhook("accepted");
+            applyStatusTransition(run, newStatus, webUrl);
+            mapper.appendEvent(run, "status", gitlabStatus + " → " + newStatus.name());
+            testRunRepository.save(run);
+            metrics.recordRunStatus(newStatus);
+            metrics.recordGitLabWebhook("accepted");
+        } finally {
+            MDC.remove("run_id");
+        }
     }
 
+    /**
+     * Ищем прогон по pipeline id; hint PORTAL_RUN_ID принимаем только если
+     * pipeline совпадает или у прогона pipeline ещё не записан.
+     */
     private Optional<TestRunEntity> findRun(Long pipelineId, UUID runIdHint) {
-        if (runIdHint != null) {
-            Optional<TestRunEntity> byId = testRunRepository.findById(runIdHint);
-            if (byId.isPresent()) {
-                return byId;
+        if (pipelineId != null) {
+            Optional<TestRunEntity> byPipeline = testRunRepository.findByGitlabPipelineId(pipelineId);
+            if (byPipeline.isPresent()) {
+                return byPipeline;
             }
         }
-        if (pipelineId == null) {
+        if (runIdHint == null) {
             return Optional.empty();
         }
-        return testRunRepository.findByGitlabPipelineId(pipelineId);
+        Optional<TestRunEntity> byHint = testRunRepository.findById(runIdHint);
+        if (byHint.isEmpty()) {
+            return Optional.empty();
+        }
+        TestRunEntity run = byHint.get();
+        Long stored = run.getGitlabPipelineId();
+        if (stored != null && pipelineId != null && !stored.equals(pipelineId)) {
+            log.warn(
+                    "Webhook rejected: PORTAL_RUN_ID={} bound to pipeline {} but event has {}",
+                    runIdHint, stored, pipelineId);
+            return Optional.empty();
+        }
+        return byHint;
     }
 
     private void applyStatusTransition(TestRunEntity run, TestRunStatus newStatus, String webUrl) {
@@ -102,6 +124,19 @@ public class TestRunWebhookService {
         if (newStatus.isTerminal()) {
             run.setEndedAt(Instant.now());
             run.setGrafanaUrl(mapper.buildGrafanaUrl(portalSettingsService.loadEntity(), run));
+        }
+    }
+
+    /** Сравнение через SHA-256 дайджесты — без утечки длины исходного секрета. */
+    private static boolean secretsEqual(String expected, String provided) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] left = md.digest(expected.getBytes(StandardCharsets.UTF_8));
+            md.reset();
+            byte[] right = md.digest(provided.getBytes(StandardCharsets.UTF_8));
+            return MessageDigest.isEqual(left, right);
+        } catch (NoSuchAlgorithmException ex) {
+            return expected.equals(provided);
         }
     }
 }
