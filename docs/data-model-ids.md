@@ -1,67 +1,79 @@
-# Идентификаторы платформы (модули 1 → 3 → 4 → 5)
+# Идентификаторы
 
-Цепочка сущностей, на которой держатся запуск, анализ и отчёт.
+Схема — Liquibase, `constructor/src/main/resources/db/changelog/db.changelog-master.yaml`. Таблицы `projects` и `scenarios` удалены: сценарий живёт в `build_records.scenario_json`.
 
 ```
-Module 1 Сценарий          Module 3 Запуск              Module 4 / 5
-─────────────────          ───────────────              ────────────
-build_id  ──►  script_id  ──►  run_id  ──►  analysis / report
-                 │                │
-                 │                └── test_id (Jira, ввод пользователя)
-                 └── git_url (опц.) / upload
+build_id ──► script_id ──► run_id ──► analysis_id
+                │              │
+                │              └── test_id (Jira, ввод при запуске)
+                └── файл в Postgres и копия в S3 на время прогона
 ```
 
-| ID | Где появляется | Описание |
+| ID | Где | Описание |
 |---|---|---|
-| `build_id` | Модуль 1 | Сборка сценария (снимок Scenario JSON + движок). Таблица `build_records`. |
-| `script_id` | Модуль 1→3 или upload | Артефакт скрипта (`.jmx` / `.js`). Источник: генерация из сборки, загрузка вручную, позже — git. Таблица `scripts`. |
-| `test_id` | Модуль 3 | Идентификатор задачи в Jira (строка, напр. `NT-1234`). Хранится в `test_runs.test_id`. |
-| `run_id` | Модуль 3 | Конкретный прогон нагрузки. PK `test_runs.id`. Основа для модулей 4 и 5. |
+| `build_id` | `build_records.id` | Снимок Scenario и движок. До 30 на пользователя, TTL по `loadtest.builds.retention-days` (30). |
+| `script_id` | `scripts.id` | Артефакт. Источник `portal_build` или `upload`. Движок `jmeter`, `k6` или `gatling`. |
+| `test_id` | `test_runs.test_id` | Ключ Jira. Уходит в GitLab как `RUN_ID`. |
+| `run_id` | `test_runs.id` | Прогон. Его же orchestrator передаёт в webhook как `PORTAL_RUN_ID`. |
+| `analysis_id` | `analysis_runs.id` | Отчёт анализа. `test_run_id` пустой, если цель введена вручную. |
 
-## Таблицы
+## `build_records`
 
-### `build_records` (как сейчас + связь со скриптом)
-- `id` = **build_id**
-- `username`, `scenario_name`, `engine`, `filename`, `scenario_json`, `created_at`
+`id`, `username`, `scenario_name`, `engine`, `filename`, `scenario_json`, `created_at`.
 
-### `scripts` (новая)
-| колонка | тип | смысл |
-|---|---|---|
-| `id` | UUID | **script_id** |
-| `username` | varchar | владелец |
-| `build_id` | UUID null | из какой сборки сгенерирован |
-| `engine` | varchar | `jmeter` \| `k6` |
-| `filename` | varchar | имя файла |
-| `source` | varchar | `portal_build` \| `upload` \| `git` |
-| `git_url` | varchar null | ссылка в git (после проливки) |
-| `content` | bytea/text | тело скрипта (upload / portal) |
-| `created_at` | timestamptz | |
+## `scripts`
 
-### `test_runs` (расширение)
-| колонка | тип | смысл |
-|---|---|---|
-| `id` | UUID | **run_id** |
-| `test_id` | varchar | **Jira key** (обязателен при запуске) |
-| `script_id` | UUID null | FK → scripts |
-| `build_id` | UUID null | FK → build_records |
-| `username`, `scenario_name`, `engine` | | метаданные |
-| `target_url` | varchar | из сценария (`base_url`), не вводится заново |
-| `params_json` | text | **runner params** (для JMeter: `heap_mb`; для k6 — пусто или минимум) |
-| `labels_json` | text | опц. метки |
-| `status`, gitlab_*, grafana_*, events, timestamps | | как раньше |
+| колонка | смысл |
+|---|---|
+| `id` | script_id |
+| `username` | владелец |
+| `build_id` | сборка, из которой собран артефакт; пусто для upload |
+| `engine` | `jmeter` \| `k6` \| `gatling` |
+| `filename` | имя файла |
+| `source` | `portal_build` \| `upload` |
+| `git_url` | колонка есть, запуск в git сценарий не кладёт |
+| `content` | тело артефакта |
+| `created_at` | |
+
+## `test_runs`
+
+| колонка | смысл |
+|---|---|
+| `id` | run_id |
+| `test_id` | ключ Jira |
+| `script_id`, `build_id` | откуда скрипт |
+| `username`, `scenario_name`, `engine` | |
+| `target_url` | URL стенда из сценария, может быть пустым |
+| `target_cluster`, `target_namespace`, `target_service`, `target_container` | цель для VictoriaMetrics. Для старта прогона не обязательны |
+| `params_json` | cpu, memory, окно, путь в S3, replicas |
+| `labels_json` | метки |
+| `status` | `queued` \| `running` \| `succeeded` \| `failed` \| `canceled` |
+| `verdict_status`, `verdict_json` | вердикт gate: `passed` \| `failed` \| `invalid`. Это не статус пайплайна |
+| `gitlab_pipeline_id`, `gitlab_web_url`, `grafana_url` | |
+| `events_json`, `error_message`, `started_at`, `ended_at`, `created_at` | |
+
+## `analysis_runs`
+
+| колонка | смысл |
+|---|---|
+| `id` | analysis_id |
+| `test_run_id` | прогон или пусто |
+| `username`, `test_id` | |
+| `target_*` | снимок цели |
+| `window_from`, `window_to` | период |
+| `status` | `queued` \| `running` \| `succeeded` \| `failed` |
+| `verdict`, `health_score`, `findings_count`, `headline` | для списка |
+| `ruleset_version` | версия `analysis/app/catalog/rules.yaml` |
+| `demo`, `demo_fault` | синтетика и какой дефект разыгран |
+| `request_json` | вход, чтобы «Пересчитать» повторил тот же запрос |
+| `report_json` | отчёт целиком |
+| `error_message`, `created_at`, `finished_at` | |
+
+Находки отдельными таблицами не хранятся.
 
 ## Потоки
 
-1. **Модуль 1 → сохранить сборку** → `build_id` (+ опционально сразу `script_id` при генерации артефакта).
-2. **Модуль 1 → выгрузить скрипт** → скачивание файла (второстепенный CTA).
-3. **Модуль 1 → к запуску** → переход в модуль 3 с выбранным `build_id`.
-4. **Модуль 3 → upload** → новый `script_id` (`source=upload`).
-5. **Модуль 3 → запуск** → новый `run_id` + ввод `test_id` + привязка `script_id`/`build_id`. Вызов GitLab — позже.
-6. **Модуль 4/5** → вход только по `run_id`.
-
-## Runner-параметры (движок)
-
-| Движок | Параметры в UI запуска |
-|---|---|
-| **JMeter** | `heap_mb` — heap JVM для инстанса (`-Xmx`), по умолчанию 1024 |
-| **k6** | отдельного «памяти» нет; профиль уже в скрипте → только кнопка «Запустить» |
+1. Сохранить сборку → `build_id` и `script_id`.
+2. Скачать скрипт — тот же `script_id`.
+3. Запуск из сборки или upload → новый `run_id`, обязателен `test_id`. Orchestrator пишет файлы в S3 и триггерит GitLab.
+4. Анализ по `run_id` или по ручной цели → `analysis_id`. После терминального статуса прогона orchestrator заводит анализ сам, если цель заполнена и включён `analysis/auto-on-finish`.

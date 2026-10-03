@@ -1,25 +1,38 @@
 # Доменная модель (контракт между сервисами)
 
-Единый JSON-контракт, которым обмениваются `frontend`, `analyzer`, `k6-generator`, `jmeter-builder` и `constructor`.
-Модель **не зависит от движка** — движок выбирается на этапе сборки (JMeter `.jmx` или k6 `.js`).
+Единый JSON-контракт, которым обмениваются `frontend`, `analyzer`, `k6-generator`, `gatling-generator`, `jmeter-builder` и `constructor`.
+Модель не зависит от движка. Движок выбирается при сборке: JMeter `.jmx`, k6 (`.js` или zip) или Gatling zip с Maven-проектом.
+
+Поля JSON — **snake_case**. В Java-записях constructor те же имена в camelCase; Jackson пишет их через `spring.jackson.property-naming-strategy: SNAKE_CASE`.
 
 ## Поток данных
 
 ```
-источник (OpenAPI URL/файл | Postman collection)
+источник (OpenAPI URL/файл | Postman collection | чистый лист)
         │
         ▼
-  analyzer.analyze()  ──►  ScenarioDraft   (список запросов + предполагаемые параметры)
+  analyzer  ──►  ScenarioDraft
         │
         ▼
   пользователь правит в UI: параметры, корреляции, интенсивность
         │
         ▼
-  constructor ──► jmeter-builder  ──►  .jmx  ──► scripts (+ build_records)
-  constructor ──► k6-generator ──►  .js
+  constructor ──► jmeter-builder      ──►  .jmx
+  constructor ──► k6-generator        ──►  .js / zip
+  constructor ──► gatling-generator   ──►  .zip (pom.xml + PortalSimulation.java)
         │
         ▼
-  test_runs (queued → webhook GitLab) · run_id / script_id / test_id
+  build_records + scripts
+        │
+        ▼
+  orchestrator ──► S3 + GitLab CI ──► test_runs
+        │
+        ▼
+  orchestrator ──► analysis ──► VictoriaMetrics
+                         └──► AnalysisReport
+        │
+        ▼
+  analysis_runs
 ```
 
 ## Пользователи и доступ
@@ -27,169 +40,218 @@
 | сущность | хранение | описание |
 |---|---|---|
 | PortalUser | `portal_users` | локальный пароль (BCrypt) или LDAP-only |
-| AuthSession | `auth_sessions` | Bearer-токен, TTL 24 ч |
-| PortalSettings | `portal_settings` | LDAP + GitLab/Grafana |
-| BuildRecord | `build_records` | снимок сценария + метаданные сборки, **scope = username** |
-| Script | `scripts` | артефакт `.jmx`/`.js` (`build_id` → `script_id`) |
-| TestRun | `test_runs` | прогон: `test_id` (Jira) + `script_id` + `run_id` |
+| AuthSession | `auth_sessions` | Bearer-токен, TTL 3 часа |
+| PortalSettings | `portal_settings` | LDAP, GitLab, Grafana |
+| BuildRecord | `build_records` | снимок сценария, scope = username, до 30 на пользователя |
+| Script | `scripts` | артефакт `.jmx` / `.js` / `.zip`, связь `build_id` → `script_id` |
+| TestRun | `test_runs` | прогон: `test_id` (Jira), `script_id`, `run_id`, цель в кластере |
+| AnalysisRun | `analysis_runs` | отчёт: вердикт, оценка, `report_json` |
+| AuditEvent | `audit_events` | вход, сохранение сборки, выгрузка скрипта, старт прогона |
 
-Аутентификация: `POST /api/auth/login` → token; большинство `/api/**` требуют `Authorization: Bearer`.
-Исключения: login, health, webhook GitLab (`X-Gitlab-Token`).
+`POST /api/auth/login` выдаёт token. Остальные `/api/**` требуют `Authorization: Bearer`.
+Без токена: login, health/ready, webhook GitLab (`X-Gitlab-Token`).
 
-## Сущности
+## Scenario
 
-### Scenario (JSON-контракт, не отдельная таблица)
-Живёт в UI и в `build_records.scenario_json`. Движок выбирается при сборке.
+Живёт в UI и в `build_records.scenario_json`. Отдельной таблицы сценариев нет.
 
 | поле | тип | описание |
 |---|---|---|
-| name | string | имя сценария |
-| sourceType | enum `openapi` \| `postman` | |
-| baseUrl | string | напр. `https://api.example.com` |
-| load | LoadConfig | режим теста, ступени, ожидаемая латентность |
-| datasets | Dataset[] | CSV-данные уровня сценария |
-| requests | Request[] | упорядоченный список |
-| autostop | AutoStop | пороги автоостановки |
-| prometheus | PrometheusConfig | метки для экспорта метрик |
+| `name` | string | имя сценария |
+| `source_type` | `openapi` \| `postman` | |
+| `base_url` | string | например `https://api.example.com` |
+| `load` | LoadConfig | режим теста и ступени |
+| `datasets` | Dataset[] | CSV уровня сценария |
+| `requests` | Request[] | упорядоченный список |
+| `autostop` | AutoStop | пороги автоостановки |
+| `prometheus` | PrometheusConfig | подпись прогона; `run_id` попадает в отчёт Gatling. Поля listener в `.jmx` больше не пишутся |
 
 ### LoadConfig
+
 | поле | тип | описание |
 |---|---|---|
-| test_mode | enum `ramp_hold` \| `max_search` | постоянная нагрузка / поиск максимума |
-| steps | int | число ступеней (для `max_search`) |
-| stepDurationSec | int | длительность ступени |
-| assumedLatencySec | number | для оценки VU/threads |
+| `test_mode` | `ramp_hold` \| `max_search` | постоянная нагрузка или поиск максимума |
+| `steps` | int | число ступеней для `max_search` |
+| `step_duration_sec` | int | длительность ступени |
+| `assumed_latency_sec` | number | оценка латентности. JMeter считает из неё размер пула потоков |
 
-> **Корреляция.** Переменные JMeter живут в рамках потока. Сценарий собирается как
-> один пользовательский путь: запросы подряд, экстрактор A → параметр B.
-> Интенсивность — через Throughput Shaping / CTT на сэмплерах; число потоков
-> покрывает максимальный требуемый RPS (из `assumedLatencySec`).
+Целевой RPS — HTTP-запросы в секунду, поле `intensity.target_rps` у запроса. Группа (корреляция или общий датасет) исполняется вместе. JMeter задаёт профиль Throughput Shaping Timer. k6 и Gatling инжектят итерации: `users/arrival = RPS / число HTTP за итерацию`.
 
 ### Dataset
-| поле | тип | описание |
-|---|---|---|
-| id, name, fileName | string | |
-| columns | string[] | |
-| rows | string[][] | инлайн-данные |
-| random | bool | случайный порядок строк |
 
-### AutoStop
-| поле | тип | описание |
-|---|---|---|
-| enabled | bool | |
-| errorRatePct / errorRateSec | | доля ошибок за окно |
-| avgResponseMs / avgResponseSec | | средний отклик за окно |
-
-### Request
-| поле | тип | описание |
-|---|---|---|
-| id | string | стабильный id внутри сценария |
-| order | int | порядок выполнения |
-| name | string | человекочитаемое имя (напр. `POST /login`) |
-| method | enum GET/POST/PUT/PATCH/DELETE/... | |
-| path | string | может содержать `{placeholder}` |
-| headers | KeyValue[] | |
-| queryParams | Param[] | |
-| body | Body | |
-| params | Param[] | все параметризуемые значения (path/query/header/body) |
-| extractions | Extraction[] | корреляция-источник: что достать из ОТВЕТА этого запроса |
-| intensity | Intensity | целевая нагрузка на этот запрос |
-| validation | Validation? | assertions / checks |
-### Body
 | поле | тип |
 |---|---|
-| mode | enum `none` \| `raw` \| `json` \| `form` |
-| contentType | string |
-| content | string (может содержать `${var}` и `${__fn()}`) |
+| `id`, `name`, `file_name` | string |
+| `columns` | string[] |
+| `rows` | string[][] |
+| `random` | bool |
 
-### Param — как заполняется значение
+### AutoStop
+
+| поле | описание |
+|---|---|
+| `enabled` | включён ли критерий |
+| `error_rate_pct`, `error_rate_sec` | доля ошибок и окно, секунды |
+| `avg_response_ms`, `avg_response_sec` | средний отклик и окно, секунды |
+
+Ноль в пороге отключает этот критерий.
+
+### Request
+
 | поле | тип | описание |
 |---|---|---|
-| name | string | имя параметра |
-| location | enum `path` \| `query` \| `header` \| `body` | |
-| source | ParamSource | стратегия получения значения |
+| `id` | string | стабильный id внутри сценария |
+| `order` | int | порядок |
+| `name` | string | имя сэмпла |
+| `method` | string | HTTP-метод |
+| `path` | string | может содержать `{name}` |
+| `url` | string \| null | абсолютный URL запроса, перекрывает `base_url` + `path` |
+| `headers` | KeyValue[] | |
+| `query_params` | Param[] | |
+| `body` | Body | |
+| `params` | Param[] | path / query / header / body |
+| `extractions` | Extraction[] | что достать из ответа |
+| `intensity` | Intensity | нагрузка запроса |
+| `validation` | Validation | код ответа и подстрока |
+| `dataset_id` | string \| null | датасет группы |
+| `repeat` | int | повторов за итерацию, минимум 1 |
+
+### Body
+
+| поле | тип |
+|---|---|
+| `mode` | `none` \| `raw` \| `json` \| `form` |
+| `content_type` | string \| null |
+| `content` | string, допускает `${var}` |
+
+### Param
+
+| поле | тип |
+|---|---|
+| `name` | string |
+| `location` | `path` \| `query` \| `header` \| `body` |
+| `source` | ParamSource |
+| `schema_type`, `example` | string \| null, подсказки из спецификации |
+| `required` | bool |
+| `quoted` | bool |
 
 ### ParamSource
-| kind | доп. поля | результат в JMeter |
+
+| `kind` | поля | смысл |
 |---|---|---|
 | `constant` | `value` | литерал |
-| `generator` | `generator` | функция JMeter (см. ниже) |
-| `correlation` | `variable` | `${variable}` из экстрактора другого запроса |
-| `csv` | `column` | `${column}` из CSV Data Set Config |
+| `generator` | `generator` | uuid, randomInt, randomString, counter, timestamp |
+| `correlation` | `variable` | значение из экстрактора другого запроса |
+| `csv` | `column` | колонка датасета |
 
 ### Generator
-| type | поля | JMeter-функция |
-|---|---|---|
-| `uuid` | — | `${__UUID()}` |
-| `randomInt` | `min`, `max` | `${__Random(min,max)}` |
-| `randomString` | `length`, `chars?` | `${__RandomString(length,chars)}` |
-| `counter` | `start?` | `${__counter(FALSE)}` |
-| `timestamp` | `format?` | `${__time(format)}` |
 
-### Extraction — корреляция (источник)
-Вешается на запрос-источник, кладёт значение из его ответа в переменную.
-| поле | тип | описание |
-|---|---|---|
-| variable | string | имя JMeter-переменной |
-| type | enum `json` \| `regex` \| `boundary` | тип экстрактора |
-| expression | string | JSONPath / regex / `left\|right` |
-| matchNo | int | номер совпадения (по умолчанию 1) |
-| defaultValue | string | значение по умолчанию |
+| `type` | поля |
+|---|---|
+| `uuid` | — |
+| `randomInt` | `min`, `max` |
+| `randomString` | `length`, `chars` |
+| `counter` | `start`, `increment` |
+| `timestamp` | `format` |
 
-Запрос-приёмник ссылается на переменную через `ParamSource.kind = correlation`.
+### Extraction
 
-### Intensity — интенсивность на запрос
-| поле | тип | описание |
-|---|---|---|
-| type | enum `none` \| `constant_throughput` \| `shaping` | стратегия |
-| targetRps | number | целевая интенсивность, запросов/сек |
-| rampUpSec | int | время выхода на targetRps (для `shaping`) |
-| holdSec | int | удержание нагрузки (для `shaping`) |
+| поле | тип |
+|---|---|
+| `variable` | string |
+| `type` | `json` \| `regex` \| `boundary` |
+| `expression` | JSONPath, regex или `left\|right` |
+| `match_no` | int, по умолчанию 1 |
+| `default_value` | string |
 
-Стратегии сборки в JMeter:
-- `constant_throughput` — **Constant Throughput Timer** (scope=this sampler), работает на
-  стандартном JMeter 5.6.3 без плагинов. `req/min = targetRps * 60`.
-- `shaping` — **Concurrency Thread Group + Throughput Shaping Timer**
-  (плагин `jpgc-casutg`), точный RPS с рампой/удержанием. Требует доустановки плагина.
+### Intensity
 
-## Пример ScenarioDraft (сокращённо)
+| поле | тип |
+|---|---|
+| `target_rps` | number, HTTP-запросы/с |
+| `ramp_up_sec` | int |
+| `hold_sec` | int |
+
+Отдельного поля стратегии нет. Режим берётся из `load.test_mode`.
+
+### Validation
+
+| поле | тип |
+|---|---|
+| `check_response_code` | bool |
+| `expected_status` | int |
+| `response_contains` | string |
+
+## Пример
 
 ```json
 {
-  "name": "example-api scenario",
-  "sourceType": "openapi",
-  "baseUrl": "https://api.example.com",
+  "name": "example-api",
+  "source_type": "openapi",
+  "base_url": "https://api.example.com",
+  "load": {
+    "test_mode": "ramp_hold",
+    "steps": 5,
+    "step_duration_sec": 60,
+    "assumed_latency_sec": 1.0
+  },
+  "datasets": [],
+  "autostop": {
+    "enabled": false,
+    "error_rate_pct": 0,
+    "error_rate_sec": 0,
+    "avg_response_ms": 0,
+    "avg_response_sec": 0
+  },
   "requests": [
     {
-      "id": "r1", "order": 1, "name": "POST /login",
-      "method": "POST", "path": "/login",
-      "headers": [{"key": "Content-Type", "value": "application/json"}],
-      "queryParams": [],
-      "body": {"mode": "json", "contentType": "application/json",
-               "content": "{\"user\":\"${username}\",\"pass\":\"${password}\"}"},
+      "id": "r1",
+      "order": 1,
+      "name": "POST /login",
+      "method": "POST",
+      "path": "/login",
+      "headers": [],
+      "query_params": [],
+      "body": {
+        "mode": "json",
+        "content_type": "application/json",
+        "content": "{\"user\":\"${username}\"}"
+      },
       "params": [
-        {"name": "username", "location": "body",
-         "source": {"kind": "csv", "column": "username"}},
-        {"name": "password", "location": "body",
-         "source": {"kind": "csv", "column": "password"}}
+        {
+          "name": "username",
+          "location": "body",
+          "source": {"kind": "csv", "column": "username"},
+          "required": true,
+          "quoted": false
+        }
       ],
       "extractions": [
-        {"variable": "authToken", "type": "json", "expression": "$.token", "matchNo": 1}
+        {
+          "variable": "authToken",
+          "type": "json",
+          "expression": "$.token",
+          "match_no": 1,
+          "default_value": ""
+        }
       ],
-      "intensity": {"type": "constant_throughput", "targetRps": 5}
-    },
-    {
-      "id": "r2", "order": 2, "name": "GET /profile",
-      "method": "GET", "path": "/profile",
-      "headers": [{"key": "Authorization", "value": "Bearer ${authToken}"}],
-      "queryParams": [], "body": {"mode": "none"},
-      "params": [
-        {"name": "Authorization", "location": "header",
-         "source": {"kind": "correlation", "variable": "authToken"}}
-      ],
-      "extractions": [],
-      "intensity": {"type": "constant_throughput", "targetRps": 20}
+      "intensity": {"target_rps": 5, "ramp_up_sec": 30, "hold_sec": 60},
+      "validation": {
+        "check_response_code": true,
+        "expected_status": 200,
+        "response_contains": ""
+      },
+      "dataset_id": null,
+      "repeat": 1
     }
   ]
 }
 ```
+
+## AnalysisReport
+
+Второй JSON-контракт. Его пишет сервис `analysis`, orchestrator кладёт документ в `analysis_runs.report_json`. Разбор прогона — в [`module-4-analysis.md`](module-4-analysis.md).
+
+Поля верхнего уровня: `run_id`, `test_id`, `ruleset_version`, `generated_at`, `window_from`, `window_to`, `target` (`cluster`, `namespace`, `service`, `container`), `test_kind` (`ramp_hold` \| `max_search` \| `endurance`), `verdict` (`healthy` \| `degraded` \| `unhealthy` \| `inconclusive`), `headline`, `health_score` (0–100), `validity` (`valid`, `reasons`), `phases`, `findings`, `correlations`, `hypotheses`, `capacity`, `coverage`, `cost`, `suppressed` (список строк), `demo`, `demo_fault`.
+
+Находка несёт `summary` с числами, `next_step`, `query` (MetricsQL) и `spark`. `coverage.score` — доля покрытых метрик в процентах. `cost` считает `queries`, `points_fetched`, `duration_ms`, `step_sec`.

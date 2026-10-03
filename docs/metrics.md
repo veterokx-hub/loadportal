@@ -17,6 +17,8 @@
 | jmeter-builder | http://localhost:8081/metrics | Prometheus text |
 | analyzer | http://localhost:8000/metrics | Prometheus text |
 | k6-generator | http://localhost:8001/metrics | Prometheus text |
+| gatling-generator | http://localhost:8002/metrics | Prometheus text |
+| analysis | http://localhost:8003/metrics | Prometheus text |
 
 ## Доменные метрики constructor
 
@@ -38,7 +40,8 @@
 |---|---|---|---|
 | `portal_runs_created_total` | counter | `engine` | Темп создания прогонов |
 | `portal_runs_status_total` | counter | `status` | Переходы статусов (queued/running/…) |
-| `portal_gitlab_webhooks_total` | counter | `result` | accepted / unknown_pipeline / rejected |
+| `portal_gitlab_webhooks_total` | counter | `result` | accepted / unknown_pipeline / rejected / ignored / canceled_kept |
+| `portal_analysis_duration_seconds` | timer | `trigger`, `verdict` | Длительность анализа: ручной запуск vs автозапуск по завершении |
 
 Плюс стандартные `http_server_requests_*`, `http_client_requests_*`, JVM.
 
@@ -49,6 +52,19 @@
 **analyzer:** `analyzer_analyze_*`, `analyzer_fetch_duration_seconds`, `analyzer_draft_requests`.
 
 **k6-generator:** `k6_generate_*`, `k6_artifact_size_bytes`.
+
+**gatling-generator:** `gatling_generate_*`, `gatling_artifact_size_bytes` (формат всегда `zip`).
+
+**analysis** (имена как в `analysis/app/metrics.py`, без суффикса `_total` у гистограмм):
+
+| Метрика | Тип | Теги | Зачем |
+|---|---|---|---|
+| `analysis_duration_seconds` | histogram | `mode`, `result` | Сколько занимает разбор; `mode` = `live` / `demo` |
+| `analysis_total` | counter | `mode`, `verdict` | Распределение вердиктов. `verdict=error` — анализ упал |
+| `analysis_findings_total` | counter | `severity`, `detector` | Какой детектор шумит |
+| `analysis_source_queries` | histogram | — | Сколько запросов в VictoriaMetrics на один анализ |
+| `analysis_source_points` | histogram | — | Сколько точек забрано за прогон |
+| `analysis_coverage_score` | histogram | — | Покрытие каталога, проценты. Низкое значение значит, что вердикт «чисто» ни о чём |
 
 ## HTTP-клиенты
 
@@ -66,3 +82,4 @@
 2. `portal_runs_active` vs `rate(portal_runs_created_total[5m])` — создаются ли прогоны, но не уходят из queued (нет вебхуков / trigger).
 3. `rate(portal_auth_logins_total{result="failure"}[5m])` — всплеск = сломан LDAP или перебор паролей.
 4. `histogram_quantile(0.95, rate(portal_build_duration_seconds_bucket[5m]))` — p95 генерации.
+5. `histogram_quantile(0.5, rate(analysis_coverage_score_bucket[1h]))` — медианное покрытие метрик. Просело — сломался каталог или доступ к источнику, а отчёты продолжают показывать «всё чисто».
