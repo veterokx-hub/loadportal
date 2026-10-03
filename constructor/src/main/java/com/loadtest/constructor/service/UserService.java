@@ -36,8 +36,8 @@ public class UserService {
         if (userRepository.existsByUsernameIgnoreCase(name)) {
             throw new IllegalArgumentException("Пользователь уже существует: " + name);
         }
-        if (!req.ldapOnly() && (req.password() == null || req.password().length() < 4)) {
-            throw new IllegalArgumentException("Пароль минимум 4 символа");
+        if (!req.ldapOnly() && (req.password() == null || req.password().length() < 8)) {
+            throw new IllegalArgumentException("Пароль минимум 8 символов");
         }
         UserRole role = req.role() != null ? req.role() : UserRole.USER;
         String hash = req.ldapOnly() ? null : authService.passwordEncoder().encode(req.password());
@@ -53,11 +53,30 @@ public class UserService {
         if (u.isLdapOnly()) {
             throw new IllegalArgumentException("LDAP-пользователь — локальный пароль не задаётся");
         }
-        if (password == null || password.length() < 4) {
-            throw new IllegalArgumentException("Пароль минимум 4 символа");
+        if (password == null || password.length() < 8) {
+            throw new IllegalArgumentException("Пароль минимум 8 символов");
         }
         u.setPasswordHash(authService.passwordEncoder().encode(password));
-        u.setMustChangePassword(false);
+        u.setMustChangePassword(true);
+        authService.revokeAllSessions(u.getUsername());
+    }
+
+    @Transactional
+    public UserDto setRole(String username, UserRole role) {
+        if (role == null) {
+            throw new IllegalArgumentException("Укажите роль");
+        }
+        UserEntity u = userRepository.findByUsernameIgnoreCase(username)
+                .orElseThrow(() -> new IllegalArgumentException("Пользователь не найден"));
+        if ("admin".equalsIgnoreCase(u.getUsername()) && role != UserRole.ADMIN) {
+            throw new IllegalArgumentException("Нельзя снять роль ADMIN у встроенного admin");
+        }
+        if (u.getRole() == UserRole.ADMIN && role != UserRole.ADMIN
+                && userRepository.countByRole(UserRole.ADMIN) <= 1) {
+            throw new IllegalArgumentException("Нельзя снять роль у последнего администратора");
+        }
+        u.setRole(role);
+        return toDto(u);
     }
 
     @Transactional
@@ -65,7 +84,10 @@ public class UserService {
         if ("admin".equalsIgnoreCase(username)) {
             throw new IllegalArgumentException("Нельзя удалить встроенного admin");
         }
-        userRepository.findByUsernameIgnoreCase(username).ifPresent(userRepository::delete);
+        userRepository.findByUsernameIgnoreCase(username).ifPresent(u -> {
+            authService.revokeAllSessions(u.getUsername());
+            userRepository.delete(u);
+        });
     }
 
     private static UserDto toDto(UserEntity u) {

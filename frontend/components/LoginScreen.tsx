@@ -1,11 +1,14 @@
 "use client";
 
 import { useId, useState, type FormEvent } from "react";
+import { LogoMark } from "@/components/LogoMark";
 
 export function LoginScreen({
   onLogin,
+  notice,
 }: {
   onLogin: (u: string, p: string) => Promise<void>;
+  notice?: string | null;
 }) {
   const uid = useId();
   const userId = `${uid}-user`;
@@ -48,21 +51,7 @@ export function LoginScreen({
       >
         <div className="login-brand">
           <span className="login-mark" aria-hidden>
-            <svg viewBox="0 0 48 48" width="28" height="28" fill="none">
-              <circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2.4" />
-              <g fill="currentColor">
-                <rect x="12.5" y="28" width="3.2" height="6" rx="0.6" />
-                <rect x="17.5" y="25" width="3.2" height="9" rx="0.6" />
-                <rect x="22.5" y="22" width="3.2" height="12" rx="0.6" />
-                <rect x="27.5" y="19" width="3.2" height="15" rx="0.6" />
-              </g>
-              <path
-                d="M11 31 C 18 30, 25 27, 30 12"
-                stroke="currentColor"
-                strokeWidth="2.6"
-                strokeLinecap="round"
-              />
-            </svg>
+            <LogoMark size={48} />
           </span>
           <div>
             <p className="login-kicker">Load Test Portal</p>
@@ -74,6 +63,12 @@ export function LoginScreen({
           Подготовка сценариев нагрузочного тестирования · JMeter · k6
         </p>
 
+        {notice && (
+          <div className="login-notice" role="status">
+            {notice}
+          </div>
+        )}
+
         <div className="field">
           <label htmlFor={userId}>Логин</label>
           <input
@@ -82,7 +77,7 @@ export function LoginScreen({
             autoComplete="username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="admin"
+            placeholder="логин"
             autoFocus
             disabled={busy}
             aria-invalid={Boolean(error)}
@@ -119,10 +114,6 @@ export function LoginScreen({
           {busy && <span className="btn-spinner" aria-hidden />}
           <span className="btn-label">{busy ? "Входим…" : "Войти"}</span>
         </button>
-
-        <p className="hint login-hint">
-          Первый запуск: <code>admin</code> / <code>admin</code> — затем смена пароля
-        </p>
       </form>
     </div>
   );

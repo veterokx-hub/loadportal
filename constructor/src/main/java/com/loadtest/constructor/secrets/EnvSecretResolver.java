@@ -4,9 +4,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
-/**
- * Локальная разработка: секреты из env (GITLAB_TRIGGER_TOKEN, GITLAB_WEBHOOK_SECRET).
- */
+/** Локальный fallback: известный Vault-path → env. Чужие пути не угадываются. */
 @Component
 public class EnvSecretResolver implements SecretResolver {
 
@@ -19,21 +17,20 @@ public class EnvSecretResolver implements SecretResolver {
         if (direct != null && !direct.isBlank()) {
             return Optional.of(direct.trim());
         }
-        String lower = vaultPath.toLowerCase();
-        if (lower.contains("trigger") || lower.contains("token")) {
-            return optionalEnv("GITLAB_TRIGGER_TOKEN");
-        }
-        if (lower.contains("webhook") || lower.contains("secret")) {
-            return optionalEnv("GITLAB_WEBHOOK_SECRET");
-        }
-        return Optional.empty();
+        String envName = switch (vaultPath) {
+            case "loadtest/ad/bind-password" -> "LDAP_BIND_PASSWORD";
+            case "loadtest/gitlab/trigger-token" -> "GITLAB_TRIGGER_TOKEN";
+            case "loadtest/gitlab/webhook-secret" -> "GITLAB_WEBHOOK_SECRET";
+            default -> null;
+        };
+        return envName == null ? Optional.empty() : optionalEnv(envName);
     }
 
     private static Optional<String> optionalEnv(String name) {
-        String v = System.getenv(name);
-        if (v == null || v.isBlank()) {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank()) {
             return Optional.empty();
         }
-        return Optional.of(v.trim());
+        return Optional.of(value.trim());
     }
 }

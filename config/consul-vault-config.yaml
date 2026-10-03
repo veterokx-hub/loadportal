@@ -33,15 +33,17 @@ loadtest:
       service-constructor: loadtest-constructor
       service-analyzer: loadtest-analyzer
       service-k6: loadtest-k6-generator
+      service-gatling: loadtest-gatling-generator
       service-jmeter: loadtest-jmeter-builder
+      service-analysis: loadtest-analysis
       service-postgres: loadtest-postgres
 
     vault:
       enabled: false
       address: http://vault.corp.example:8200
-      # Путь KV для секретов портала (пароль БД, bootstrap-admin, LDAP bind)
-      kv-path: secret/data/loadtest/portal
-      # Токен / Auth — только через Vault Agent / ESO, не в ConfigMap
+      # Имя KV v2 mount. URL: {address}/v1/{kv-path}/data/{vault-path}
+      # Токен чтения — env VAULT_TOKEN (или Vault Agent), не в этом файле.
+      kv-path: secret
 
     # --- Все адреса модулей (включая frontend → backend) ---
     modules:
@@ -55,5 +57,39 @@ loadtest:
       orchestrator-url: http://localhost:8082
       analyzer-url: http://localhost:8000
       k6-generator-url: http://localhost:8001
+      gatling-generator-url: http://localhost:8002
       jmeter-builder-url: http://localhost:8081
+      analysis-url: http://localhost:8003
       postgres-jdbc-url: jdbc:postgresql://localhost:5432/loadtest
+
+  # CORS allowlist. В k8s обязательно заменить на Origin из браузера
+  # (DevTools → любой /api → Request Headers → Origin). Не Service frontend, не «*».
+  # Несколько URL — через запятую, без слэша в конце.
+  cors:
+    allowed-origins: http://localhost:3000,http://127.0.0.1:3000
+
+  # Несекреты — Consul KV (prefix loadtest/), если discovery.consul.enabled=true.
+  # Иначе env из application.yml, иначе БД portal_settings (GitLab/AD).
+  # Ключи KV:
+  #   s3/endpoint  s3/public-endpoint  s3/bucket  s3/region
+  #   gitlab/base-url  gitlab/project-id  gitlab/repository  gitlab/ref
+  #   ad/enabled  ad/url  ad/base-dn  ad/user-dn-pattern
+  #   ad/user-search-base  ad/user-search-filter  ad/bind-dn
+  #   victoriametrics/url  victoriametrics/concurrency  victoriametrics/timeout-sec
+  #   analysis/demo  analysis/auto-on-finish
+  # Секреты — Vault KV v2, поле data.value (или единственный ключ):
+  #   loadtest/s3/access-key  loadtest/s3/secret-key
+  #   loadtest/gitlab/trigger-token  loadtest/gitlab/webhook-secret  loadtest/gitlab/api-token
+  #   loadtest/ad/bind-password
+  #   loadtest/victoriametrics/bearer-token
+  #   loadtest/internal-token
+
+  # --- Модуль «Анализ» ---
+  # Несекреты — Consul KV analysis/*, victoriametrics/*. Секреты — Vault.
+  # Ниже только запасные значения, если Consul выключен.
+  analysis:
+    # Автозапуск отчёта после завершения прогона (orchestrator, по вебхуку GitLab).
+    # Молча пропускается, если у прогона не заполнены cluster/namespace/service.
+    # Consul KV analysis/auto-on-finish перекрывает это поле.
+    auto-on-finish: true
+

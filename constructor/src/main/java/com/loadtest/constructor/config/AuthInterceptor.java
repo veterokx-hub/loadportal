@@ -40,7 +40,8 @@ public class AuthInterceptor implements HandlerInterceptor {
         request.setAttribute(ATTR_AUTH, ctx.get());
         if (ctx.get().mustChangePassword()
                 && !path.startsWith("/api/auth/change-password")
-                && !path.startsWith("/api/auth/logout")) {
+                && !path.startsWith("/api/auth/logout")
+                && !path.startsWith("/api/auth/sessions")) {
             writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, "Требуется сменить пароль");
             return false;
         }

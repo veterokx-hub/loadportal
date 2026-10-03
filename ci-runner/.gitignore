@@ -1,0 +1,6 @@
+.nt/
+.work/
+results/
+digests/
+__pycache__/
+.DS_Store

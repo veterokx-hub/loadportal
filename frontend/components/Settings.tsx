@@ -1,63 +1,79 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { LdapSettings, PortalUser, GitLabSettings } from "@/lib/api";
+import type { PortalUser, AuditEvent } from "@/lib/api";
 import {
   createUser,
   deleteUser,
-  getLdapSettings,
-  getGitLabSettings,
+  setUserPassword,
+  setUserRole,
   listUsers,
-  saveLdapSettings,
-  saveGitLabSettings,
-  testGitLabConnection,
+  listAuditEvents,
 } from "@/lib/api";
-import type { UserRole } from "@/lib/auth";
+import { getUsername, type UserRole } from "@/lib/auth";
 
-type SettingsTab = "users" | "ldap" | "gitlab";
+type SettingsTab = "users" | "audit";
 
-const EMPTY_LDAP: LdapSettings = {
-  ldap_enabled: false,
-  ldap_url: "ldap://dc.corp.local:389",
-  ldap_base_dn: "dc=corp,dc=local",
-  ldap_user_dn_pattern: "uid={0},ou=people,dc=corp,dc=local",
-  ldap_user_search_base: "ou=people,dc=corp,dc=local",
-  ldap_user_search_filter: "(sAMAccountName={0})",
-  ldap_bind_dn: "",
-  ldap_bind_password: "",
+const AUDIT_LABELS: Record<string, string> = {
+  LOGIN: "Вход",
+  BUILD_SAVE: "Сохранение сборки",
+  SCRIPT_EXPORT: "Выгрузка скрипта",
+  RUN_START: "Запуск теста",
 };
 
-const EMPTY_GITLAB: GitLabSettings = {
-  gitlab_base_url: "https://gitlab.corp.local",
-  gitlab_project_id: "",
-  gitlab_repository: "lt-ump",
-  gitlab_trigger_token: "",
-  gitlab_upload_token: "",
-  gitlab_webhook_secret: "",
-  grafana_base_url: "",
-  grafana_dashboard_template: "/d/loadtest?var-run_id={run_id}&from={from}&to={to}",
-};
+function auditLabel(action: string): string {
+  return AUDIT_LABELS[action] ?? action;
+}
 
-export function Settings({ open, onClose }: { open: boolean; onClose: () => void }) {
+function auditTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function auditDetail(action: string, detail: string): string {
+  if (action === "LOGIN") {
+    if (detail === "ldap") return "LDAP";
+    if (detail === "local") return "локальный вход";
+  }
+  return detail;
+}
+
+export function Settings({
+  open,
+  onClose,
+  onForceLogout,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onForceLogout?: (notice: string) => void;
+}) {
   const overlayMouseDown = useRef(false);
   const [tab, setTab] = useState<SettingsTab>("users");
   const [users, setUsers] = useState<PortalUser[]>([]);
-  const [ldap, setLdap] = useState<LdapSettings>(EMPTY_LDAP);
-  const [gitlab, setGitlab] = useState<GitLabSettings>(EMPTY_GITLAB);
   const [tabError, setTabError] = useState<{ tab: SettingsTab; message: string } | null>(null);
   const [tabHint, setTabHint] = useState<{ tab: SettingsTab; message: string } | null>(null);
   const [loadingUsers, setLoadingUsers] = useState(false);
-  const [loadingLdap, setLoadingLdap] = useState(false);
-  const [loadingGitlab, setLoadingGitlab] = useState(false);
-  const [testingGitlab, setTestingGitlab] = useState(false);
-  const [usersLoaded, setUsersLoaded] = useState(false);
-  const [ldapLoaded, setLdapLoaded] = useState(false);
-  const [gitlabLoaded, setGitlabLoaded] = useState(false);
+  const [audit, setAudit] = useState<AuditEvent[]>([]);
+  const [loadingAudit, setLoadingAudit] = useState(false);
+  const [auditLoaded, setAuditLoaded] = useState(false);
+  const [userNameQ, setUserNameQ] = useState("");
+  const [userRoleQ, setUserRoleQ] = useState<UserRole | "">("");
+  const [auditActionQ, setAuditActionQ] = useState("");
 
   const [newUser, setNewUser] = useState("");
   const [newPass, setNewPass] = useState("");
   const [newRole, setNewRole] = useState<UserRole>("USER");
   const [newLdapOnly, setNewLdapOnly] = useState(false);
+  const [resetUser, setResetUser] = useState("");
+  const [resetPass, setResetPass] = useState("");
 
   const switchTab = (next: SettingsTab) => {
     setTab(next);
@@ -70,7 +86,6 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
     setTabError(null);
     try {
       setUsers(await listUsers());
-      setUsersLoaded(true);
     } catch (e) {
       setTabError({
         tab: "users",
@@ -81,60 +96,52 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
     }
   }, []);
 
-  const loadLdap = useCallback(async () => {
-    setLoadingLdap(true);
-    setTabError(null);
-    try {
-      const l = await getLdapSettings();
-      setLdap({ ...EMPTY_LDAP, ...l, ldap_bind_password: "" });
-      setLdapLoaded(true);
-    } catch (e) {
-      setTabError({
-        tab: "ldap",
-        message: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setLoadingLdap(false);
-    }
-  }, []);
-
-  const loadGitlab = useCallback(async () => {
-    setLoadingGitlab(true);
-    setTabError(null);
-    try {
-      const g = await getGitLabSettings();
-      setGitlab({ ...EMPTY_GITLAB, ...g });
-      setGitlabLoaded(true);
-    } catch (e) {
-      setTabError({
-        tab: "gitlab",
-        message: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setLoadingGitlab(false);
-    }
-  }, []);
-
   useEffect(() => {
     if (!open) return;
     setTabError(null);
     setTabHint(null);
     setTab("users");
-    setUsersLoaded(false);
-    setLdapLoaded(false);
-    setGitlabLoaded(false);
+    setAuditLoaded(false);
+    setUserNameQ("");
+    setUserRoleQ("");
+    setAuditActionQ("");
     loadUsers();
   }, [open, loadUsers]);
 
-  useEffect(() => {
-    if (!open || tab !== "ldap" || ldapLoaded) return;
-    loadLdap();
-  }, [open, tab, ldapLoaded, loadLdap]);
+  const loadAudit = useCallback(async () => {
+    setLoadingAudit(true);
+    setTabError(null);
+    try {
+      setAudit(await listAuditEvents());
+      setAuditLoaded(true);
+    } catch (e) {
+      setTabError({
+        tab: "audit",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setLoadingAudit(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!open || tab !== "gitlab" || gitlabLoaded) return;
-    loadGitlab();
-  }, [open, tab, gitlabLoaded, loadGitlab]);
+    if (!open || tab !== "audit" || auditLoaded) return;
+    loadAudit();
+  }, [open, tab, auditLoaded, loadAudit]);
+
+  async function changeRole(username: string, role: UserRole) {
+    setTabError(null);
+    setTabHint(null);
+    try {
+      const updated = await setUserRole(username, role);
+      setUsers((prev) => prev.map((u) => (u.username === updated.username ? updated : u)));
+    } catch (e) {
+      setTabError({
+        tab: "users",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
 
   async function addUser() {
     setTabError(null);
@@ -158,6 +165,28 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
     }
   }
 
+  async function resetPassword() {
+    const name = resetUser.trim();
+    setTabError(null);
+    setTabHint(null);
+    try {
+      await setUserPassword(name, resetPass);
+      setResetPass("");
+      const self = name.toLowerCase() === (getUsername() || "").toLowerCase();
+      const msg = `Пароль ${name} сброшен — сессии отозваны, при входе нужна смена пароля`;
+      if (self && onForceLogout) {
+        onForceLogout(msg);
+        return;
+      }
+      setTabHint({ tab: "users", message: msg });
+    } catch (e) {
+      setTabError({
+        tab: "users",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
   async function removeUser(username: string) {
     setTabError(null);
     setTabHint(null);
@@ -173,69 +202,21 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
     }
   }
 
-  async function saveLdap() {
-    setTabError(null);
-    setTabHint(null);
-    try {
-      const saved = await saveLdapSettings(ldap);
-      setLdap({ ...saved, ldap_bind_password: "" });
-      setTabHint({ tab: "ldap", message: "LDAP сохранён" });
-    } catch (e) {
-      setTabError({
-        tab: "ldap",
-        message: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
-
-  async function saveGitlab() {
-    setTabError(null);
-    setTabHint(null);
-    try {
-      const saved = await saveGitLabSettings(gitlab);
-      setGitlab({ ...EMPTY_GITLAB, ...saved });
-      setTabHint({ tab: "gitlab", message: "GitLab CI сохранён" });
-    } catch (e) {
-      setTabError({
-        tab: "gitlab",
-        message: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }
-
-  async function testGitlab() {
-    setTestingGitlab(true);
-    setTabError(null);
-    setTabHint(null);
-    try {
-      await saveGitLabSettings(gitlab);
-      const result = await testGitLabConnection();
-      if (result.ok) {
-        setTabHint({
-          tab: "gitlab",
-          message: result.project_path
-            ? `${result.message} (${result.project_path})`
-            : result.message,
-        });
-      } else {
-        setTabError({ tab: "gitlab", message: result.message });
-      }
-    } catch (e) {
-      setTabError({
-        tab: "gitlab",
-        message: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setTestingGitlab(false);
-    }
-  }
-
   if (!open) return null;
 
-  const loading =
-    tab === "users" ? loadingUsers : tab === "ldap" ? loadingLdap : loadingGitlab;
+  const loading = tab === "users" ? loadingUsers : loadingAudit;
   const showError = tabError?.tab === tab ? tabError.message : null;
   const showHint = tabHint?.tab === tab && !showError ? tabHint.message : null;
+  const filteredUsers = users
+    .filter((u) => {
+      if (userRoleQ && u.role !== userRoleQ) return false;
+      const q = userNameQ.trim().toLowerCase();
+      if (q && !u.username.toLowerCase().includes(q)) return false;
+      return true;
+    })
+    .sort((a, b) => a.username.localeCompare(b.username, "ru"));
+  const shownUsers = filteredUsers.slice(0, 5);
+  const shownAudit = audit.filter((e) => !auditActionQ || e.action === auditActionQ);
 
   return (
     <div
@@ -260,8 +241,7 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
           {(
             [
               ["users", "Пользователи"],
-              ["ldap", "LDAP / AD"],
-              ["gitlab", "GitLab CI"],
+              ["audit", "Журнал"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -284,8 +264,29 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
             <section>
               <h3>Учётные записи</h3>
               <p className="hint">
-                У каждого пользователя своя история сборок. Пароль хранится в БД (BCrypt).
+                LDAP-пользователи создаются при первом входе. Роль можно сменить здесь.
               </p>
+              <div className="user-filters">
+                <div className="field">
+                  <label>Имя</label>
+                  <input
+                    value={userNameQ}
+                    placeholder="фильтр по логину"
+                    onChange={(e) => setUserNameQ(e.target.value)}
+                  />
+                </div>
+                <div className="field" style={{ width: 160, flex: "none" }}>
+                  <label>Роль</label>
+                  <select
+                    value={userRoleQ}
+                    onChange={(e) => setUserRoleQ((e.target.value || "") as UserRole | "")}
+                  >
+                    <option value="">все</option>
+                    <option value="USER">USER</option>
+                    <option value="ADMIN">ADMIN</option>
+                  </select>
+                </div>
+              </div>
               <div className="table-wrap">
                 <table>
                   <thead>
@@ -297,17 +298,30 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
                     </tr>
                   </thead>
                   <tbody>
-                    {users.map((u) => (
+                    {shownUsers.map((u) => (
                       <tr key={u.username}>
                         <td>
                           <code>{u.username}</code>
                         </td>
                         <td>
-                          <span className="tag">{u.role}</span>
+                          <select
+                            className="role-select"
+                            value={u.role}
+                            disabled={u.username.toLowerCase() === "admin"}
+                            title={
+                              u.username.toLowerCase() === "admin"
+                                ? "Роль встроенного admin нельзя снять"
+                                : undefined
+                            }
+                            onChange={(e) => changeRole(u.username, e.target.value as UserRole)}
+                          >
+                            <option value="USER">USER</option>
+                            <option value="ADMIN">ADMIN</option>
+                          </select>
                         </td>
                         <td className="muted">{u.ldap_only ? "да" : "локальный"}</td>
                         <td>
-                          {u.username !== "admin" && (
+                          {u.username.toLowerCase() !== "admin" && (
                             <button
                               className="ghost small"
                               type="button"
@@ -319,9 +333,21 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
                         </td>
                       </tr>
                     ))}
+                    {shownUsers.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="muted">
+                          Нет пользователей по фильтру
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
+              {filteredUsers.length > 5 && (
+                <p className="hint">
+                  Показаны 5 из {filteredUsers.length}. Уточните фильтр по имени или роли.
+                </p>
+              )}
             </section>
 
             <section>
@@ -364,178 +390,115 @@ export function Settings({ open, onClose }: { open: boolean; onClose: () => void
                 Создать пользователя
               </button>
             </section>
+
+            <section>
+              <h3>Сброс пароля</h3>
+              <p className="hint">
+                Пользователь сменит пароль при следующем входе. Все его сессии отзываются сразу.
+              </p>
+              <div className="row">
+                <div className="field">
+                  <label>Логин</label>
+                  <select
+                    value={resetUser}
+                    onChange={(e) => setResetUser(e.target.value)}
+                  >
+                    <option value="">выберите</option>
+                    {users
+                      .filter((u) => !u.ldap_only)
+                      .map((u) => (
+                        <option key={u.username} value={u.username}>
+                          {u.username}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Новый пароль</label>
+                  <input
+                    type="password"
+                    value={resetPass}
+                    onChange={(e) => setResetPass(e.target.value)}
+                    placeholder="минимум 8 символов"
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void resetPassword()}
+                disabled={!resetUser || resetPass.length < 8}
+              >
+                Сбросить пароль
+              </button>
+            </section>
           </>
         )}
 
-        {tab === "ldap" && !loadingLdap && (
+        {tab === "audit" && (
           <section>
-            <h3>Корпоративный LDAP / Active Directory</h3>
-            <p className="hint">
-              Вход доменной учётной записью AD (логин = sAMAccountName). Группы AD не
-              синхронизируются — роли задаются в портале.
-            </p>
-            <label className="inline" style={{ textTransform: "none", marginBottom: 14 }}>
-              <input
-                type="checkbox"
-                style={{ width: "auto" }}
-                checked={ldap.ldap_enabled}
-                onChange={(e) => setLdap({ ...ldap, ldap_enabled: e.target.checked })}
-              />
-              <span>Включить LDAP-аутентификацию</span>
-            </label>
-            <div className="field">
-              <label>URL сервера LDAP</label>
-              <input
-                value={ldap.ldap_url}
-                onChange={(e) => setLdap({ ...ldap, ldap_url: e.target.value })}
-                placeholder="ldap://dc.corp.local:389"
-              />
-            </div>
-            <div className="field">
-              <label>Base DN</label>
-              <input
-                value={ldap.ldap_base_dn}
-                onChange={(e) => setLdap({ ...ldap, ldap_base_dn: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label>User DN pattern ({`{0}`} = логин)</label>
-              <input
-                value={ldap.ldap_user_dn_pattern}
-                onChange={(e) => setLdap({ ...ldap, ldap_user_dn_pattern: e.target.value })}
-              />
-            </div>
-            <div className="row">
-              <div className="field">
-                <label>User search base</label>
-                <input
-                  value={ldap.ldap_user_search_base}
-                  onChange={(e) => setLdap({ ...ldap, ldap_user_search_base: e.target.value })}
-                />
+            <div className="audit-toolbar">
+              <div>
+                <h3>Журнал действий</h3>
+                <p className="hint">
+                  Входы, сохранения сборок, выгрузка скриптов и запуски тестов. Новые сверху,
+                  хранятся последние 500 событий.
+                </p>
               </div>
-              <div className="field">
-                <label>User search filter</label>
-                <input
-                  value={ldap.ldap_user_search_filter}
-                  onChange={(e) =>
-                    setLdap({ ...ldap, ldap_user_search_filter: e.target.value })
-                  }
-                />
-              </div>
-            </div>
-            <div className="row">
-              <div className="field">
-                <label>Bind DN</label>
-                <input
-                  value={ldap.ldap_bind_dn}
-                  onChange={(e) => setLdap({ ...ldap, ldap_bind_dn: e.target.value })}
-                />
-              </div>
-              <div className="field">
-                <label>Bind password</label>
-                <input
-                  type="password"
-                  value={ldap.ldap_bind_password}
-                  placeholder="оставьте пустым, чтобы не менять"
-                  onChange={(e) => setLdap({ ...ldap, ldap_bind_password: e.target.value })}
-                />
-              </div>
-            </div>
-            <button type="button" onClick={saveLdap}>
-              Сохранить LDAP
-            </button>
-          </section>
-        )}
-
-        {tab === "gitlab" && !loadingGitlab && (
-          <section>
-            <h3>GitLab CI и Grafana</h3>
-            <p className="hint">
-              Pipeline всегда запускается на ветке <code>master</code>. Токены пока хранятся в
-              настройках (позже — Vault); локально можно задать env{" "}
-              <code>GITLAB_TRIGGER_TOKEN</code>, <code>GITLAB_UPLOAD_TOKEN</code>,{" "}
-              <code>GITLAB_WEBHOOK_SECRET</code>. Webhook:{" "}
-              <code>/api/runs/webhook/gitlab</code> (заголовок X-Gitlab-Token).
-            </p>
-            <div className="field">
-              <label>GitLab base URL</label>
-              <input
-                value={gitlab.gitlab_base_url}
-                onChange={(e) => setGitlab({ ...gitlab, gitlab_base_url: e.target.value })}
-                placeholder="https://gitlab.corp.local"
-              />
-            </div>
-            <div className="row">
-              <div className="field">
-                <label>Project ID или path</label>
-                <input
-                  value={gitlab.gitlab_project_id}
-                  onChange={(e) => setGitlab({ ...gitlab, gitlab_project_id: e.target.value })}
-                  placeholder="123 или group/project"
-                />
-              </div>
-              <div className="field">
-                <label>Репозиторий по умолчанию (REPOSITORY)</label>
-                <input
-                  value={gitlab.gitlab_repository}
-                  onChange={(e) => setGitlab({ ...gitlab, gitlab_repository: e.target.value })}
-                  placeholder="lt-ump"
-                />
-              </div>
-            </div>
-            <div className="field">
-              <label>Токен запуска теста (trigger token)</label>
-              <input
-                type="password"
-                autoComplete="off"
-                value={gitlab.gitlab_trigger_token}
-                onChange={(e) => setGitlab({ ...gitlab, gitlab_trigger_token: e.target.value })}
-                placeholder="glptt-…"
-              />
-            </div>
-            <div className="field">
-              <label>Токен заливки скриптов (upload / commit)</label>
-              <input
-                type="password"
-                autoComplete="off"
-                value={gitlab.gitlab_upload_token}
-                onChange={(e) => setGitlab({ ...gitlab, gitlab_upload_token: e.target.value })}
-                placeholder="glpat-…"
-              />
-            </div>
-            <div className="field">
-              <label>Webhook secret</label>
-              <input
-                type="password"
-                autoComplete="off"
-                value={gitlab.gitlab_webhook_secret}
-                onChange={(e) => setGitlab({ ...gitlab, gitlab_webhook_secret: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label>Grafana base URL</label>
-              <input
-                value={gitlab.grafana_base_url}
-                onChange={(e) => setGitlab({ ...gitlab, grafana_base_url: e.target.value })}
-                placeholder="https://grafana.corp.local"
-              />
-            </div>
-            <div className="field">
-              <label>Шаблон dashboard ({`{run_id}`}, {`{from}`}, {`{to}`})</label>
-              <input
-                value={gitlab.grafana_dashboard_template}
-                onChange={(e) =>
-                  setGitlab({ ...gitlab, grafana_dashboard_template: e.target.value })
-                }
-              />
-            </div>
-            <div className="inline" style={{ gap: 12 }}>
-              <button type="button" onClick={saveGitlab}>
-                Сохранить GitLab
+              <button
+                type="button"
+                className="ghost small"
+                onClick={() => void loadAudit()}
+              >
+                Обновить
               </button>
-              <button type="button" className="ghost" onClick={testGitlab} disabled={testingGitlab}>
-                {testingGitlab ? "Проверка…" : "Проверить соединение"}
-              </button>
+            </div>
+            <div className="user-filters">
+              <div className="field" style={{ width: 240, flex: "none" }}>
+                <label>Событие</label>
+                <select value={auditActionQ} onChange={(e) => setAuditActionQ(e.target.value)}>
+                  <option value="">все</option>
+                  {Object.entries(AUDIT_LABELS).map(([id, label]) => (
+                    <option key={id} value={id}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="table-wrap">
+              <table className="audit-table">
+                <thead>
+                  <tr>
+                    <th>Время</th>
+                    <th>Пользователь</th>
+                    <th>Событие</th>
+                    <th>Детали</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shownAudit.map((e) => (
+                    <tr key={e.id}>
+                      <td className="audit-time">{auditTime(e.created_at)}</td>
+                      <td>
+                        <code>{e.username}</code>
+                      </td>
+                      <td>
+                        <span className={`audit-chip audit-${e.action.toLowerCase()}`}>
+                          {auditLabel(e.action)}
+                        </span>
+                      </td>
+                      <td className="muted">{auditDetail(e.action, e.detail)}</td>
+                    </tr>
+                  ))}
+                  {shownAudit.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="muted">
+                        Пока нет записей
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </section>
         )}

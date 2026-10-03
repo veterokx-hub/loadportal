@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# Точка входа пода-генератора: исполняет один шард одного прогона или smoke.
+#
+# Вход:  артефакт pre-check в $CI_PROJECT_DIR — .nt/run.env и .nt/scenario/;
+#        LT_MODE=load|smoke из переменных джобы.
+# Выход: results/shard-<N>/ или results/smoke/ — meta.json + сырые итоги инструмента.
+#
+# Код выхода: 0 — итоги есть (SLA оценивает gate), 4 — итогов нет, шард невалиден.
+# Нарушение SLA намеренно не роняет эту джобу: красный generate — проблема генератора,
+# красный gate — проблема сервиса. Годность smoke решает джоба smoke-check (verdict.py).
+#
+# Секреты сценария уже лежат в окружении как LT_SECRET_*. Их нельзя логировать и нельзя
+# передавать через -J / -e / -D: свойства попадают в taurus.json и в лог джобы.
+# JMeter: ${__groovy(System.getenv("LT_SECRET_ИМЯ"))}, k6: __ENV.LT_SECRET_ИМЯ,
+# Gatling: System.getenv("LT_SECRET_ИМЯ").
+set -euo pipefail
+
+cd "${CI_PROJECT_DIR:-$PWD}"
+# shellcheck source=/dev/null
+source .nt/run.env
+
+MODE="${LT_MODE:-load}"
+if [ "$MODE" = "smoke" ]; then
+  SHARD=1 SHARDS=1 NAME="smoke"
+  BUDGET="$LT_SMOKE_BUDGET_SEC"
+else
+  SHARD="${CI_NODE_INDEX:-1}" SHARDS="${CI_NODE_TOTAL:-1}" NAME="shard-${CI_NODE_INDEX:-1}"
+  BUDGET=$((LT_DURATION_SEC + ${LT_TOOL_OVERRUN_SEC:-600}))
+fi
+OUT="$PWD/results/$NAME"
+# Вне results/: распакованный сценарий и конфиги не должны уезжать в артефакты.
+# Поштучно на шард: шарды могут делить рабочий каталог (локальный прогон, shared build dir).
+WORK="$PWD/.work/$NAME"
+mkdir -p "$OUT" "$WORK"
+rm -f "$WORK/error"
+
+TOOL_CODE=""
+ERROR=""
+STARTED_AT=""
+CHILD=""
+
+# stderr: stdout функций перехватывается через $(...).
+log() { printf '%s [lt-run %s %s/%s] %s\n' "$(date -u +%H:%M:%S)" "$MODE" "$SHARD" "$SHARDS" "$*" >&2; }
+
+write_meta() {
+  if [ -z "$ERROR" ] && [ -f "$WORK/error" ]; then ERROR="$(cat "$WORK/error")"; fi
+  jq -n \
+    --argjson shard "$SHARD" --argjson shards "$SHARDS" --arg tool "$LT_TOOL" --arg mode "$MODE" \
+    --arg code "$TOOL_CODE" --arg error "$ERROR" --arg started "$STARTED_AT" \
+    --arg finished "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg pod "${HOSTNAME:-}" --arg job "${CI_JOB_ID:-}" \
+    '{
+      mode: $mode, shard: $shard, shards: $shards, tool: $tool,
+      tool_exit_code: (if $code == "" then null else ($code | tonumber) end),
+      error: (if $error == "" then null else $error end),
+      started_at: (if $started == "" then null else $started end),
+      finished_at: $finished, pod: $pod, ci_job_id: $job
+    }' > "$OUT/meta.json"
+}
+trap write_meta EXIT
+
+# Файл нужен, потому что invalid() внутри $(...) завершает только подоболочку.
+invalid() {
+  ERROR="$1"
+  printf '%s' "$1" > "$WORK/error"
+  log "ERROR: $1"
+  exit 4
+}
+
+on_signal() {
+  ERROR="${ERROR:-прогон отменён: под получил сигнал остановки}"
+  log "$ERROR"
+  if [ -n "$CHILD" ]; then kill -TERM "$CHILD" 2>/dev/null || true; fi
+}
+trap on_signal TERM INT
+
+# Инструмент — фоновый процесс + wait: только так trap срабатывает во время прогона.
+# timeout создаёт свою группу процессов, поэтому сигнал до него доносит on_signal.
+run_tool() {
+  log "запуск: $1 (лимит ${BUDGET}s)"
+  timeout --signal=TERM --kill-after=120 "$BUDGET" "$@" &
+  CHILD=$!
+  local code=0
+  wait "$CHILD" || code=$?
+  # wait прерывается сигналом раньше, чем инструмент дописал итоги — дожидаемся.
+  while kill -0 "$CHILD" 2>/dev/null; do
+    code=0
+    wait "$CHILD" || code=$?
+  done
+  CHILD=""
+  TOOL_CODE="$code"
+  if [ "$code" -eq 124 ]; then
+    ERROR="${ERROR:-инструмент не уложился в ${BUDGET}s и был остановлен}"
+  fi
+}
+
+unpack() {
+  rm -rf "$WORK/scenario"
+  mkdir -p "$WORK/scenario"
+  # unzip отбрасывает абсолютные пути и '..' в именах: zip-slip из архива невозможен.
+  unzip -q "$1" -d "$WORK/scenario" || invalid "архив сценария не распаковывается"
+}
+
+# Главный файл сценария внутри распакованного архива.
+entry_file() {
+  local ext="$1"
+  if [ -n "${LT_ENTRYPOINT:-}" ]; then
+    case "$LT_ENTRYPOINT" in /* | *..*) invalid "entrypoint '$LT_ENTRYPOINT' выходит за пределы архива" ;; esac
+    [ -f "$WORK/scenario/$LT_ENTRYPOINT" ] || invalid "в архиве нет entrypoint '$LT_ENTRYPOINT'"
+    echo "$WORK/scenario/$LT_ENTRYPOINT"
+    return
+  fi
+  local found
+  mapfile -t found < <(find "$WORK/scenario" -maxdepth 2 -type f -name "*.$ext")
+  [ "${#found[@]}" -eq 1 ] || invalid "в архиве ${#found[@]} файлов *.$ext; укажите scenario.entrypoint"
+  echo "${found[0]}"
+}
+
+script_file() {
+  local ext="$1"
+  if [[ "$LT_SCENARIO_LOCAL" == *.zip ]]; then
+    unpack "$LT_SCENARIO_LOCAL"
+    entry_file "$ext"
+  else
+    echo "$PWD/$LT_SCENARIO_LOCAL"
+  fi
+}
+
+run_jmeter() {
+  local script
+  script="$(script_file jmx)"
+  # Taurus без load-секции не переписывает профиль: нагрузку задаёт сам JMX.
+  # passfail не используется: SLA по объединённым шардам считает gate, а
+  # per-shard критерии противоречили бы точным перцентилям по всем шардам.
+  # smoke: свойство load_profile перекрывает расписание каждого Throughput Shaping Timer —
+  # 1 RPS на группу, по окончании расписания таймер сам останавливает тест.
+  # base_url и influxdb_url передаются только непустыми: пустое свойство перебило бы дефолт ${__P(...)}.
+  # influxdb_url — адрес VictoriaMetrics для InfluxdbBackendListenerClient, например
+  # http://vm:8428/write?db=jmeter. Скрипт читает его как ${__P(influxdb_url)}.
+  jq -n \
+    --arg dir "$OUT/taurus" --arg script "$script" \
+    --arg run_id "${LT_PORTAL_RUN_ID:-$LT_RUN_LABEL}" --arg label "$LT_RUN_LABEL" \
+    --arg shard "$SHARD" --arg shards "$SHARDS" --arg factor "$LOAD_FACTOR" \
+    --arg mode "$MODE" --arg base_url "$LT_BASE_URL" --arg smoke_sec "$LT_SMOKE_DURATION_SEC" \
+    --arg influx "${LT_INFLUX_URL:-}" \
+    '{
+      settings: {"artifacts-dir": $dir, "check-updates": false},
+      execution: [{executor: "jmeter", scenario: "portal"}],
+      scenarios: {portal: {script: $script}},
+      modules: {
+        jmeter: {properties: (
+          {runId: $run_id, run_label: $label, shard: $shard, shards: $shards, load_factor: $factor, "lt.mode": $mode}
+          + (if $base_url != "" then {base_url: $base_url} else {} end)
+          + (if $influx != "" then {influxdb_url: $influx} else {} end)
+          + (if $mode == "smoke" then {load_profile: "const(1,\($smoke_sec)s)"} else {} end)
+        )}
+      }
+    }' > "$WORK/taurus.json"
+
+  run_tool bzt "$WORK/taurus.json"
+  if [ -f "$OUT/taurus/kpi.jtl" ]; then mv "$OUT/taurus/kpi.jtl" "$OUT/kpi.jtl"; fi
+}
+
+run_k6() {
+  local script
+  script="$(script_file js)"
+  GOMAXPROCS="$(awk -v c="$LT_CPU" 'BEGIN { if (c ~ /m$/) { sub(/m$/, "", c); c = c / 1000 } n = int(c); if (n < c) n++; if (n < 1) n = 1; print n }')"
+  export GOMAXPROCS
+
+  local args=(run --no-usage-report --quiet
+    --summary-export "$OUT/summary.json"
+    --summary-trend-stats "avg,min,med,max,p(90),p(95),p(99)"
+    --tag "testid=$LT_RUN_LABEL" --tag "shard=$SHARD" --tag "lt_mode=$MODE"
+    # Скрипт сам выбирает набор scenarios по LT_MODE: CLI-флаги --vus/--iterations
+    # заменили бы все сценарии дефолтным и потеряли exec-функции.
+    -e "LT_MODE=$MODE" -e "LT_SHARD=$SHARD" -e "LT_SHARDS=$SHARDS"
+    -e "LT_SMOKE_DURATION_SEC=$LT_SMOKE_DURATION_SEC")
+  if [ -n "$LT_BASE_URL" ]; then args+=(-e "BASE_URL=$LT_BASE_URL"); fi
+  if [ "$SHARDS" -gt 1 ]; then
+    local sequence="0" i
+    for ((i = 1; i <= SHARDS; i++)); do sequence+=",$i/$SHARDS"; done
+    args+=(--execution-segment "$((SHARD - 1))/$SHARDS:$SHARD/$SHARDS" --execution-segment-sequence "$sequence")
+  fi
+  if [ -n "${K6_PROMETHEUS_RW_SERVER_URL:-}" ]; then
+    export K6_PROMETHEUS_RW_TREND_STATS="${K6_PROMETHEUS_RW_TREND_STATS:-p(95),p(99)}"
+    args+=(-o experimental-prometheus-rw)
+  fi
+
+  run_tool k6 "${args[@]}" "$script"
+}
+
+run_gatling() {
+  unpack "$LT_SCENARIO_LOCAL"
+  local pom project want
+  pom="$(find "$WORK/scenario" -maxdepth 2 -type f -name pom.xml | head -n 1)"
+  [ -n "$pom" ] || invalid "в архиве Gatling нет pom.xml"
+  project="$(dirname "$pom")"
+
+  # Офлайн-Maven видит только прогретый при сборке образа репозиторий:
+  # чужая версия упала бы невнятной ошибкой резолва, поэтому проверяем заранее.
+  want="$(sed -n 's:.*<gatling.version>\(.*\)</gatling.version>.*:\1:p' "$pom" | head -n 1)"
+  if [ -n "$want" ] && [ "$want" != "$GATLING_VERSION" ]; then
+    invalid "проект требует Gatling $want, образ собран с $GATLING_VERSION: нужен образ lt-gatling:$want"
+  fi
+  want="$(sed -n 's:.*<gatling-maven-plugin.version>\(.*\)</gatling-maven-plugin.version>.*:\1:p' "$pom" | head -n 1)"
+  if [ -n "$want" ] && [ "$want" != "$GATLING_MAVEN_PLUGIN_VERSION" ]; then
+    invalid "проект требует gatling-maven-plugin $want, образ содержит $GATLING_MAVEN_PLUGIN_VERSION"
+  fi
+
+  local props=(-DrunId="${LT_PORTAL_RUN_ID:-$LT_RUN_LABEL}" -DloadFactor="$LOAD_FACTOR"
+    -Dshard="$SHARD" -Dshards="$SHARDS" -Dlt.mode="$MODE" -Dlt.smokeDurationSec="$LT_SMOKE_DURATION_SEC"
+    -Dgatling.core.runDescription="$LT_RUN_LABEL $MODE $SHARD/$SHARDS")
+  if [ -n "$LT_BASE_URL" ]; then props+=(-DbaseUrl="$LT_BASE_URL"); fi
+
+  run_tool mvn -o -B -f "$pom" -Dmaven.repo.local="$LT_MAVEN_REPO" gatling:test "${props[@]}"
+
+  local stats
+  stats="$(find "$project/target/gatling" -type f -path '*/js/global_stats.json' 2>/dev/null | head -n 1)"
+  if [ -n "$stats" ]; then
+    cp "$stats" "$OUT/global_stats.json"
+    cp -r "$(dirname "$(dirname "$stats")")" "$OUT/report"
+  fi
+}
+
+has_results() {
+  case "$LT_TOOL" in
+    jmeter) [ -s "$OUT/kpi.jtl" ] ;;
+    k6) [ -s "$OUT/summary.json" ] ;;
+    gatling) [ -s "$OUT/global_stats.json" ] ;;
+  esac
+}
+
+LOAD_FACTOR="$(awk -v n="$SHARDS" 'BEGIN { printf "%.6f", 1 / n }')"
+
+# Smoke стартует сразу: окно нагрузки pre-check сдвинул на его бюджет.
+if [ "$MODE" = "load" ]; then
+  [ "$SHARDS" = "$LT_SHARDS" ] || invalid "CI_NODE_TOTAL=$SHARDS не совпадает с LT_SHARDS=$LT_SHARDS"
+
+  # Барьер старта: шарды не общаются между собой, синхронизирует их только время (chrony на нодах).
+  now="$(date +%s)"
+  if [ "$now" -lt "$LT_START_EPOCH" ]; then
+    log "ожидание начала окна $LT_START_UTC ($((LT_START_EPOCH - now))s)"
+    # sleep в фоне: иначе сигнал отмены ждал бы конца сна.
+    sleep "$((LT_START_EPOCH - now))" &
+    wait $! || true
+    [ -z "$ERROR" ] || exit 4
+  fi
+  late=$(($(date +%s) - LT_START_EPOCH))
+  if [ "$SHARDS" -gt 1 ] && [ "$late" -gt "${LT_LATE_TOLERANCE_SEC:-30}" ]; then
+    invalid "шард опоздал к старту на ${late}s: нагрузка шардов не совпала бы по времени"
+  fi
+  # Тот же порог, что в pre-check: прогон мог простоять в очереди resource_group.
+  if [ "$late" -gt 300 ]; then
+    invalid "окно началось ${late}s назад (очередь пула генераторов): создайте прогон заново"
+  fi
+elif [ "$MODE" != "smoke" ]; then
+  invalid "неизвестный LT_MODE='$MODE' (ожидается load или smoke)"
+fi
+
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+log "старт: $LT_TOOL, профиль $LT_PROFILE, метка $LT_RUN_LABEL, доля нагрузки $LOAD_FACTOR"
+case "$LT_TOOL" in
+  jmeter) run_jmeter ;;
+  k6) run_k6 ;;
+  gatling) run_gatling ;;
+  *) invalid "неизвестный инструмент '$LT_TOOL'" ;;
+esac
+
+has_results || invalid "${ERROR:-$LT_TOOL завершился с кодом $TOOL_CODE без итогов}"
+if [ -n "$ERROR" ]; then
+  log "ERROR: $ERROR (итоги частичные)"
+  exit 4
+fi
+log "готово: код инструмента $TOOL_CODE"

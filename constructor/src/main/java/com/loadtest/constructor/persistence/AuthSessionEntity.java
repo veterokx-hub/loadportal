@@ -7,7 +7,8 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "auth_sessions", indexes = {
-        @Index(name = "idx_auth_sessions_token", columnList = "token", unique = true)
+        @Index(name = "idx_auth_sessions_token", columnList = "token", unique = true),
+        @Index(name = "idx_auth_sessions_username", columnList = "username")
 })
 public class AuthSessionEntity {
 
@@ -36,6 +37,10 @@ public class AuthSessionEntity {
         this.expiresAt = expiresAt;
     }
 
+    public UUID getId() {
+        return id;
+    }
+
     public String getToken() {
         return token;
     }
@@ -46,5 +51,9 @@ public class AuthSessionEntity {
 
     public Instant getExpiresAt() {
         return expiresAt;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
     }
 }

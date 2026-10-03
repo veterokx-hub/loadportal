@@ -23,6 +23,9 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
   const {
     scenario,
     setScenario,
+    replaceScenario,
+    isDirty,
+    markScenarioSaved,
     maxReached,
     setMaxReached,
     advanceMax,
@@ -45,14 +48,13 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
 
   function resetToNewScenario() {
     setNewScenarioDialog(false);
-    setScenario(null);
+    replaceScenario(null);
     setMaxReached(0);
     router.push(scenarioPath("source"));
   }
 
   function onNewScenarioClick() {
-    // Есть что терять — предлагаем сохранить текущую сборку.
-    if (scenario && scenario.requests.length > 0) {
+    if (scenario && scenario.requests.length > 0 && isDirty) {
       setNewScenarioDialog(true);
     } else {
       resetToNewScenario();
@@ -67,7 +69,10 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
           title="Новый сценарий"
           message={`Текущий сценарий «${scenario.name}» будет очищен. Сохранить текущую сборку перед началом нового сценария?`}
           onCancel={() => setNewScenarioDialog(false)}
-          onDone={resetToNewScenario}
+          onDone={(saved) => {
+            if (saved) markScenarioSaved();
+            resetToNewScenario();
+          }}
         />
       )}
 
@@ -123,7 +128,7 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
             advance(1);
           }}
           onRestore={(s) => {
-            setScenario(s);
+            replaceScenario(s);
             advanceMax(3);
             router.push(scenarioPath("intensity"));
           }}
@@ -155,7 +160,7 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
           setScenario={setScenario}
           updateRequest={updateRequest}
           onRestoreScenario={(s) => {
-            setScenario(s);
+            replaceScenario(s);
             advanceMax(3);
             router.push(scenarioPath("intensity"));
           }}

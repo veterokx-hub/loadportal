@@ -48,6 +48,7 @@ public class DiscoveryConfig {
         private String serviceAnalyzer = "loadtest-analyzer";
         private String serviceK6 = "loadtest-k6-generator";
         private String serviceJmeter = "loadtest-jmeter-builder";
+        private String serviceAnalysis = "loadtest-analysis";
         private String servicePostgres = "loadtest-postgres";
 
         public boolean isEnabled() {
@@ -130,6 +131,14 @@ public class DiscoveryConfig {
             this.serviceJmeter = serviceJmeter;
         }
 
+        public String getServiceAnalysis() {
+            return serviceAnalysis;
+        }
+
+        public void setServiceAnalysis(String serviceAnalysis) {
+            this.serviceAnalysis = serviceAnalysis;
+        }
+
         public String getServicePostgres() {
             return servicePostgres;
         }
@@ -147,6 +156,7 @@ public class DiscoveryConfig {
         private String analyzerUrl = "";
         private String k6GeneratorUrl = "";
         private String jmeterBuilderUrl = "";
+        private String analysisUrl = "";
         private String postgresJdbcUrl = "";
 
         public String getFrontendApiBaseUrl() {
@@ -195,6 +205,14 @@ public class DiscoveryConfig {
 
         public void setJmeterBuilderUrl(String jmeterBuilderUrl) {
             this.jmeterBuilderUrl = jmeterBuilderUrl;
+        }
+
+        public String getAnalysisUrl() {
+            return analysisUrl;
+        }
+
+        public void setAnalysisUrl(String analysisUrl) {
+            this.analysisUrl = analysisUrl;
         }
 
         public String getPostgresJdbcUrl() {

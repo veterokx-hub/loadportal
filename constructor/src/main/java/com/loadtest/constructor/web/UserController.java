@@ -3,6 +3,7 @@ package com.loadtest.constructor.web;
 import com.loadtest.constructor.config.AuthInterceptor;
 import com.loadtest.constructor.service.UserService;
 import com.loadtest.constructor.web.dto.ChangePasswordRequest;
+import com.loadtest.constructor.web.dto.ChangeRoleRequest;
 import com.loadtest.constructor.web.dto.CreateUserRequest;
 import com.loadtest.constructor.web.dto.UserDto;
 import jakarta.servlet.http.HttpServletRequest;
@@ -38,6 +39,15 @@ public class UserController {
                                HttpServletRequest request) {
         AuthInterceptor.requireAdmin(request);
         userService.setPassword(username, req.password());
+    }
+
+    @PutMapping("/{username}/role")
+    public UserDto setRole(
+            @PathVariable String username,
+            @RequestBody ChangeRoleRequest req,
+            HttpServletRequest request) {
+        AuthInterceptor.requireAdmin(request);
+        return userService.setRole(username, req.role());
     }
 
     @DeleteMapping("/{username}")

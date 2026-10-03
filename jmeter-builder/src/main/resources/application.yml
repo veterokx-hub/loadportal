@@ -1,3 +1,6 @@
+loadtest:
+  internal-token: ${LOADTEST_INTERNAL_TOKEN:}
+
 server:
   port: ${APP_PORT:8081}
 
@@ -5,6 +8,7 @@ spring:
   application:
     name: jmeter-builder
   jackson:
+    use-jackson2-defaults: true
     property-naming-strategy: SNAKE_CASE
     default-property-inclusion: non_null
     mapper:
@@ -13,6 +17,10 @@ spring:
 # Метрики для VictoriaMetrics: экспозиция Prometheus выведена на /metrics,
 # остальные actuator-эндпоинты закрыты (health отдаёт собственный контроллер).
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: false
   endpoints:
     web:
       base-path: /

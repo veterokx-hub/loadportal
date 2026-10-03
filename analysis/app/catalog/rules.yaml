@@ -1,0 +1,267 @@
+# Настройки детекторов и декларативные инварианты.
+#
+# ruleset_version попадает в каждый отчёт: находки, сделанные разными версиями
+# правил, нельзя сравнивать между прогонами. Меняете порог — меняйте версию.
+
+ruleset_version: "1.0.0"
+
+detectors:
+  # D1 — сдвиг уровня внутри фазы (робастная z-оценка по медиане/MAD).
+  level:
+    z_threshold: 4.0
+    # Ни при каком z не сообщаем о отклонении меньше этого: 40 мс на фоне 30 мс
+    # статистически значимы, практически — нет.
+    min_deviation_pct: 20.0
+    # Персистентность: выброс должен держаться, а не мигнуть в одной точке.
+    persistence_sec: 90
+    # Пол для MAD в процентах от уровня — иначе на плоском ряде z уходит в бесконечность.
+    scale_floor_pct: 2.0
+
+  # D2 — дрейф на плато (Theil–Sen + Mann–Kendall).
+  drift:
+    p_value: 0.01
+    min_slope_pct_per_hour: 4.0
+    min_duration_sec: 900
+    # Накопленное за окно изменение должно перекрыть собственный разброс ряда.
+    # Без этого на длинном ряде значимым оказывается любой наклон.
+    min_effect_sigma: 1.5
+    # Ряды, где дрейф означает утечку: считаем прогноз до упора в лимит.
+    project_to_limit:
+      jvm.gc.live_data: jvm.heap.max
+      jvm.heap.used: jvm.heap.max
+      go.heap.inuse: mem.limit
+      mem.working_set: mem.limit
+
+  # Окна, исключаемые из детектирования.
+  warmup_skip_sec: 120
+  cooldown_skip_sec: 60
+
+  # Константы и счётчики: сдвиг уровня и наклон для них смысла не имеют,
+  # их изменения ловят инварианты и детектор событий.
+  skip_statistical:
+    - http.rps
+    - cpu.limit
+    - mem.limit
+    - jvm.heap.max
+    - jvm.pool.max
+    - db.pool.max
+    - k8s.restarts
+    - k8s.pods_ready
+    - k8s.oom
+
+  # Максимум находок в отчёте после дедупликации — чтобы отчёт читали, а не листали.
+  max_findings: 24
+
+# Инварианты: то, чего быть не должно независимо от статистики.
+# op: gt | gte | lt | lte | increase (прирост счётчика за окно)
+# class: saturation | error | latency | platform — используется для «первого упора» в max_search
+invariants:
+  - id: error_rate_slo
+    title: Ошибки выше допустимого
+    metric: http.error_rate
+    op: gt
+    value: 1.0
+    slo_from: slo_error_rate_pct
+    for_sec: 60
+    phases: [plateau, step, ramp]
+    severity: critical
+    class: error
+    summary: "Доля 5xx держалась на {observed} против порога {threshold} в течение {breach}."
+    next_step: "Разложите ошибки по эндпоинтам и кодам: 500 — исключения в коде, 503 — отказ вышестоящего или очередь."
+
+  - id: latency_slo_p99
+    title: p99 вышел за SLO
+    metric: http.rt.p99
+    op: gt
+    value: 0
+    slo_from: slo_p99_ms
+    slo_scale: 0.001
+    for_sec: 120
+    phases: [plateau, step]
+    severity: major
+    class: latency
+    summary: "p99 держался на {observed} против SLO {threshold} в течение {breach}."
+    next_step: "Сравните p50 и p99: расходятся — ищите очередь (пул, GC, блокировки), растут вместе — нехватка CPU."
+
+  - id: cpu_saturation
+    title: CPU у лимита
+    metric: derived.cpu_saturation
+    op: gte
+    value: 90.0
+    for_sec: 180
+    phases: [plateau, step]
+    severity: major
+    class: saturation
+    summary: "Потребление CPU держалось на {observed} от лимита в течение {breach}."
+    next_step: "Либо поднимите лимит и повторите тест, либо профилируйте горячие методы — дальше рост RPS не поедет."
+
+  - id: cpu_throttling
+    title: Ядро тормозит контейнер
+    metric: cpu.throttled
+    op: gt
+    value: 5.0
+    for_sec: 180
+    phases: [plateau, step]
+    severity: major
+    class: saturation
+    summary: "CPU троттлился {observed} времени в течение {breach}."
+    next_step: "Троттлинг добавляет задержку рывками. Проверьте requests/limits: слишком низкий limit при высоком requests даёт пилу."
+
+  - id: memory_saturation
+    title: Память у лимита
+    metric: derived.mem_saturation
+    op: gte
+    value: 90.0
+    for_sec: 120
+    phases: [plateau, step, ramp]
+    severity: major
+    class: saturation
+    summary: "Working set занимал {observed} лимита в течение {breach}."
+    next_step: "До OOMKill остаётся мало. Снимите heap dump на пике — по нему видно, что именно не освобождается."
+
+  - id: gc_pressure_high
+    title: Приложение занято сборкой мусора
+    metric: jvm.gc.pause_share
+    op: gt
+    value: 10.0
+    for_sec: 120
+    phases: [plateau, step]
+    severity: critical
+    class: saturation
+    summary: "В GC уходило {observed} времени в течение {breach}."
+    next_step: "Больше 10% — потолок пропускной способности определяется GC, а не бизнес-логикой. Смотрите объём живых объектов и размер heap."
+
+  - id: gc_pressure_go
+    title: Go-рантайм занят сборкой мусора
+    metric: go.gc.pause_share
+    op: gt
+    value: 8.0
+    for_sec: 120
+    phases: [plateau, step]
+    severity: major
+    class: saturation
+    summary: "В GC уходило {observed} времени в течение {breach}."
+    next_step: "Проверьте аллокации на запрос: pprof heap с двух точек теста и diff между ними."
+
+  - id: db_pool_exhausted
+    title: Очередь за соединением к БД
+    metric: db.pool.pending
+    op: gt
+    value: 0.0
+    for_sec: 60
+    phases: [plateau, step, ramp]
+    severity: critical
+    class: saturation
+    summary: "В очереди за соединением стояло до {observed} потоков в течение {breach}."
+    next_step: "Пул исчерпан. Это либо мало соединений, либо долгие транзакции: сравните время запроса к БД и время удержания соединения."
+
+  - id: db_pool_saturation
+    title: Пул БД заполнен
+    metric: derived.pool_saturation
+    op: gte
+    value: 95.0
+    for_sec: 120
+    phases: [plateau, step]
+    severity: major
+    class: saturation
+    summary: "Пул соединений был занят на {observed} в течение {breach}."
+    next_step: "Пул на пределе: свободных соединений почти нет, и следующая ступень нагрузки упрётся здесь. Сверьтесь с очередью за соединением — она показывает, начали ли потоки уже ждать."
+
+  - id: thread_pool_saturation
+    title: Пул потоков заполнен
+    metric: derived.thread_saturation
+    op: gte
+    value: 90.0
+    for_sec: 120
+    phases: [plateau, step]
+    severity: major
+    class: saturation
+    summary: "Пул обработчиков был занят на {observed} в течение {breach}."
+    next_step: "Запросы начинают ждать в accept-очереди. Смотрите, чем заняты потоки: блокирующие вызовы наружу — первый кандидат."
+
+  - id: restarts_during_test
+    title: Контейнер перезапускался
+    metric: k8s.restarts
+    op: increase
+    value: 0.0
+    for_sec: 0
+    phases: []
+    severity: critical
+    class: platform
+    summary: "Счётчик рестартов вырос на {observed} за окно теста."
+    next_step: "Данные после рестарта не сопоставимы с данными до. Найдите причину в kubectl describe / previous-логах и повторите прогон."
+
+  - id: oom_killed
+    title: Процесс убит по памяти
+    metric: k8s.oom
+    op: increase
+    value: 0.0
+    for_sec: 0
+    phases: []
+    severity: critical
+    class: platform
+    summary: "Зафиксирован OOMKilled ({observed})."
+    next_step: "Либо лимит меньше реального потребления под нагрузкой, либо утечка. Сравните тренд памяти на плато."
+
+  - id: pods_lost
+    title: Часть реплик выпала
+    metric: k8s.pods_ready
+    op: lt
+    value: 0
+    baseline_from_phase: warmup
+    baseline_ratio: 1.0
+    for_sec: 60
+    phases: []
+    severity: critical
+    class: platform
+    summary: "Готовых реплик стало {observed} против {threshold} на старте."
+    next_step: "Нагрузка перераспределилась на выживших — цифры пропускной способности занижены. Разберитесь с причиной выпадения."
+
+  - id: cache_hit_drop
+    title: Кэш перестал попадать
+    metric: cache.hit_ratio
+    op: lt
+    value: 80.0
+    for_sec: 300
+    phases: [plateau]
+    severity: minor
+    class: saturation
+    summary: "Попадания в кэш опустились до {observed} в течение {breach}."
+    next_step: "Проверьте TTL и вытеснение: под нагрузкой рабочий набор мог перестать влезать в кэш."
+
+  - id: net_errors
+    title: Ошибки на сетевом интерфейсе
+    metric: net.errors
+    op: gt
+    value: 0.0
+    for_sec: 120
+    phases: [plateau, step]
+    severity: minor
+    class: platform
+    summary: "Интерфейс сообщал об ошибках ({observed}) в течение {breach}."
+    next_step: "Смотрите в сторону инфраструктуры: проблема ниже приложения."
+
+# Ожидаемое поведение — не находка. Проверяется до записи в отчёт.
+expected:
+  # Рост этих метрик вслед за RPS нормален: их дрейф на ramp не сообщаем.
+  follows_load: [cpu.usage, jvm.pool.busy, db.pool.active, go.goroutines, http.rt.p90, http.rt.p50]
+  # Пилообразный heap — работа GC, а не утечка: дрейф heap.used сам по себе не находка,
+  # находкой является дрейф живых объектов после сборки.
+  sawtooth: [jvm.heap.used]
+
+# Цепочка причинности для корреляции: ключ → что он объясняет.
+# Используется только для формулировки «что за чем потянулось», не для вердикта.
+causal:
+  jvm.gc.live_data: [jvm.gc.pause_share, mem.working_set, derived.mem_saturation]
+  jvm.gc.pause_share: [http.rt.p99, derived.tail_ratio, cpu.usage]
+  go.heap.inuse: [go.gc.pause_share, derived.mem_saturation]
+  go.gc.pause_share: [http.rt.p99, derived.tail_ratio]
+  cpu.throttled: [http.rt.p99, derived.tail_ratio]
+  derived.cpu_saturation: [cpu.throttled, http.rt.p99]
+  db.pool.pending: [http.rt.p99, jvm.pool.busy, derived.thread_saturation]
+  derived.pool_saturation: [db.pool.pending]
+  db.query.p99: [derived.pool_saturation, db.pool.pending]
+  derived.thread_saturation: [http.rt.p99, http.error_rate]
+  http.rt.p99: [http.error_rate]
+  kafka.consumer.lag: [http.error_rate]
+  go.goroutines: [derived.mem_saturation, go.heap.inuse]

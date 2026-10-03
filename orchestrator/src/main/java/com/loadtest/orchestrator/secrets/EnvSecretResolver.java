@@ -4,10 +4,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
-/**
- * Локальная разработка / fallback: секреты из env.
- * {@code resolve(path)} сначала ищет env с именем {@code path}, затем известные GitLab-ключи.
- */
+/** Локальный fallback: известный Vault-path → env. Чужие пути не угадываются. */
 @Component
 public class EnvSecretResolver implements SecretResolver {
 
@@ -20,24 +17,25 @@ public class EnvSecretResolver implements SecretResolver {
         if (direct != null && !direct.isBlank()) {
             return Optional.of(direct.trim());
         }
-        String lower = vaultPath.toLowerCase();
-        if (lower.contains("upload")) {
-            return optionalEnv("GITLAB_UPLOAD_TOKEN");
-        }
-        if (lower.contains("webhook") || lower.contains("secret")) {
-            return optionalEnv("GITLAB_WEBHOOK_SECRET");
-        }
-        if (lower.contains("trigger") || lower.contains("token")) {
-            return optionalEnv("GITLAB_TRIGGER_TOKEN");
-        }
-        return Optional.empty();
+        String envName = switch (vaultPath) {
+            case "loadtest/s3/access-key" -> "S3_ACCESS_KEY";
+            case "loadtest/s3/secret-key" -> "S3_SECRET_KEY";
+            case "loadtest/gitlab/trigger-token" -> "GITLAB_TRIGGER_TOKEN";
+            case "loadtest/gitlab/webhook-secret" -> "GITLAB_WEBHOOK_SECRET";
+            case "loadtest/gitlab/upload-token" -> "GITLAB_UPLOAD_TOKEN";
+            case "loadtest/gitlab/api-token" -> "GITLAB_API_TOKEN";
+            case "loadtest/victoriametrics/bearer-token" -> "VICTORIAMETRICS_BEARER";
+            case "loadtest/internal-token" -> "LOADTEST_INTERNAL_TOKEN";
+            default -> null;
+        };
+        return envName == null ? Optional.empty() : optionalEnv(envName);
     }
 
     private static Optional<String> optionalEnv(String name) {
-        String v = System.getenv(name);
-        if (v == null || v.isBlank()) {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank()) {
             return Optional.empty();
         }
-        return Optional.of(v.trim());
+        return Optional.of(value.trim());
     }
 }

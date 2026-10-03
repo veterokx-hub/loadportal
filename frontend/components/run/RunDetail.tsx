@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getRun } from "@/lib/api";
-import { RUN_STATUS_LABELS } from "@/lib/run-status";
+import { cancelRun, getRun } from "@/lib/api";
+import { RUN_STATUS_LABELS, VERDICT_LABELS } from "@/lib/run-status";
+import { safeHttpHref } from "@/lib/safe-url";
+import { RunAnalysisLink } from "@/components/analysis/RunAnalysisLink";
 
 export function RunDetail({
   runId,
@@ -15,6 +17,7 @@ export function RunDetail({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [canceling, setCanceling] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -32,6 +35,20 @@ export function RunDetail({
   useEffect(() => {
     load();
   }, [load]);
+
+  async function cancel() {
+    if (!window.confirm("Остановить прогон? Pipeline в GitLab будет отменён.")) return;
+    setCanceling(true);
+    setError(null);
+    try {
+      setRun(await cancelRun(runId));
+      onRefreshList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCanceling(false);
+    }
+  }
 
   async function copyId() {
     await navigator.clipboard.writeText(runId);
@@ -53,6 +70,8 @@ export function RunDetail({
     const v = run.params?.[key];
     return typeof v === "string" && v ? v : null;
   };
+  const gitlabHref = safeHttpHref(run.gitlab_web_url);
+  const grafanaHref = safeHttpHref(run.grafana_url);
 
   return (
     <section>
@@ -64,18 +83,56 @@ export function RunDetail({
         <button className="ghost small" type="button" onClick={load} disabled={loading}>
           {loading ? "…" : "Обновить"}
         </button>
+        {(run.status === "queued" || run.status === "running") && (
+          <button className="ghost small" type="button" onClick={cancel} disabled={canceling}>
+            {canceling ? "Останавливаем…" : "Остановить"}
+          </button>
+        )}
       </div>
 
+      {error && <div className="error">{error}</div>}
       {run.error_message && <div className="error">{run.error_message}</div>}
+      {run.verdict && (
+        <div className="row">
+          <div className="field">
+            <label>Вердикт</label>
+            <span
+              className={`tag run-status run-status-${run.verdict.status === "passed" ? "succeeded" : "failed"}`}
+            >
+              {VERDICT_LABELS[run.verdict.status] ?? run.verdict.status}
+            </span>
+          </div>
+          <div className="field">
+            <label>p95</label>
+            <code>{run.verdict.p95_ms == null ? "—" : `${Math.round(run.verdict.p95_ms)} мс`}</code>
+          </div>
+          <div className="field">
+            <label>p99</label>
+            <code>{run.verdict.p99_ms == null ? "—" : `${Math.round(run.verdict.p99_ms)} мс`}</code>
+          </div>
+          <div className="field">
+            <label>Ошибки</label>
+            <code>
+              {run.verdict.error_rate_pct == null ? "—" : `${run.verdict.error_rate_pct.toFixed(2)}%`}
+            </code>
+          </div>
+          <div className="field">
+            <label>RPS</label>
+            <code>{run.verdict.rps == null ? "—" : run.verdict.rps.toFixed(1)}</code>
+          </div>
+        </div>
+      )}
+
+      <RunAnalysisLink runId={run.id} targetFilled={Boolean(run.target_service)} />
 
       <div className="inline" style={{ gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-        {run.gitlab_web_url && (
-          <a href={run.gitlab_web_url} target="_blank" rel="noreferrer" className="pill-source">
+        {gitlabHref && (
+          <a href={gitlabHref} target="_blank" rel="noreferrer" className="pill-source">
             Pipeline в GitLab
           </a>
         )}
-        {run.grafana_url && (
-          <a href={run.grafana_url} target="_blank" rel="noreferrer" className="pill-source">
+        {grafanaHref && (
+          <a href={grafanaHref} target="_blank" rel="noreferrer" className="pill-source">
             Grafana
           </a>
         )}

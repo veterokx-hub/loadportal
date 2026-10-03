@@ -9,5 +9,11 @@ public record Param(
         ParamSource source,
         String schemaType,
         String example,
-        boolean required
-) {}
+        boolean required,
+        boolean quoted
+) {
+    public Param(String name, ParamLocation location, ParamSource source,
+                 String schemaType, String example, boolean required) {
+        this(name, location, source, schemaType, example, required, false);
+    }
+}

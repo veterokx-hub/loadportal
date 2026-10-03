@@ -1,13 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { Intensity, RequestModel, Scenario, TestMode } from "@/lib/types";
 import { downloadBlob, generateScript, saveBuild } from "@/lib/api";
 import { groupRequests, groupTitle, groupIntensity } from "@/lib/grouping";
-import { formatRps, groupProfile } from "@/lib/profile";
+import { arrivalRate, formatRps, groupProfile, requestShareRps, samplesPerIteration } from "@/lib/profile";
+import { ENGINE_META, ENGINES, runCommand, type Engine } from "@/lib/engines";
 import { LoadChart, CHART_COLORS, type Series } from "@/components/LoadChart";
 import { BuildHistory } from "@/components/BuildHistory";
 import { analyzeScenario } from "@/lib/readiness";
+import { NumberField } from "@/components/NumberField";
+import { MetricsSection } from "@/components/intensity/MetricsSection";
+import { AutostopSection } from "@/components/intensity/AutostopSection";
+import { usePortal } from "@/context/PortalContext";
 
 export function Step4Intensity({
   scenario,
@@ -32,10 +37,30 @@ export function Step4Intensity({
   const [historyKey, setHistoryKey] = useState(0);
   const [sharedRamp, setSharedRamp] = useState(false);
   const [sharedHold, setSharedHold] = useState(false);
-  const [engine, setEngine] = useState<"jmeter" | "k6">("jmeter");
+  const [engine, setEngine] = useState<Engine>("jmeter");
+  const [invalidFields, setInvalidFields] = useState<Record<string, boolean>>({});
+  const { markScenarioSaved } = usePortal();
+
+  const markField = useCallback((id: string, ok: boolean) => {
+    setInvalidFields((prev) => {
+      const was = prev[id];
+      if (ok && was === undefined) return prev;
+      if (ok) {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      }
+      if (was === true) return prev;
+      return { ...prev, [id]: true };
+    });
+  }, []);
+
+  const intensityReady = Object.keys(invalidFields).length === 0;
 
   const load = scenario.load;
   const maxSearch = load.test_mode === "max_search";
+  const meta = ENGINE_META[engine];
 
   const groups = useMemo(() => groupRequests(scenario), [scenario]);
   const readiness = useMemo(() => analyzeScenario(scenario), [scenario]);
@@ -79,15 +104,19 @@ export function Step4Intensity({
 
   const first = groups[0] ? groupIntensity(groups[0]) : null;
 
-  /** Расчётный RPS запроса внутри группы с учётом повторов (Loop Controller).
-   *  TST ограничивает суммарный поток группы; доля запроса ∝ его повторам. */
   function reqRps(g: (typeof groups)[number], repeat: number): number {
-    const sum = g.requests.reduce((a, r) => a + Math.max(1, r.repeat), 0);
-    const total = Math.max(0, groupIntensity(g).target_rps);
-    return sum > 0 ? (total * Math.max(1, repeat)) / sum : 0;
+    return requestShareRps(
+      groupIntensity(g).target_rps,
+      repeat,
+      samplesPerIteration(g.requests)
+    );
   }
 
   async function build() {
+    if (!intensityReady) {
+      setError("Заполните все поля интенсивности");
+      return;
+    }
     setBuilding(true);
     setError(null);
     setDone(null);
@@ -105,11 +134,16 @@ export function Step4Intensity({
   }
 
   async function saveOnly() {
+    if (!intensityReady) {
+      setError("Заполните все поля интенсивности");
+      return;
+    }
     setSaving(true);
     setError(null);
     setSavedHint(null);
     try {
       const saved = await saveBuild(scenario, engine);
+      markScenarioSaved();
       setSavedHint(
         `Сборка сохранена · build_id=${saved.build_id.slice(0, 8)}… · script_id=${saved.script_id.slice(0, 8)}…`
       );
@@ -122,10 +156,15 @@ export function Step4Intensity({
   }
 
   async function goToRun() {
+    if (!intensityReady) {
+      setError("Заполните все поля интенсивности");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
       const saved = await saveBuild(scenario, engine);
+      markScenarioSaved();
       setHistoryKey((k) => k + 1);
       onGoToRun?.(saved.build_id);
     } catch (e) {
@@ -138,6 +177,27 @@ export function Step4Intensity({
   return (
     <div className="panel">
       <h2>4. Интенсивность и сборка</h2>
+
+      <div className="row" style={{ alignItems: "flex-end" }}>
+        <div className="field" style={{ flex: "none", minWidth: 420 }}>
+          <label>Движок сборки</label>
+          <div className="inline">
+            {ENGINES.map((e) => (
+              <div
+                key={e.id}
+                className={`pill-source pill-engine ${engine === e.id ? "active" : ""}`}
+                onClick={() => setEngine(e.id)}
+              >
+                {e.label}
+                <span className="pill-engine-tagline">{e.tagline}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="hint" style={{ marginTop: -4 }}>
+        {meta.rpsHint}
+      </div>
 
       <div className="row" style={{ alignItems: "flex-end" }}>
         <div className="field" style={{ flex: "none", minWidth: 260 }}>
@@ -157,42 +217,43 @@ export function Step4Intensity({
             </div>
           </div>
         </div>
-        <div className="field" style={{ width: 150, flex: "none" }}>
-          <label>Ожид. латентность, сек</label>
-          <input
-            type="number"
-            step="0.1"
-            value={load.assumed_latency_sec}
-            onChange={(e) => setLoad({ assumed_latency_sec: Number(e.target.value) })}
-          />
-        </div>
+        {meta.needsLatency && (
+          <div className="field" style={{ width: 150, flex: "none" }}>
+            <label>Ожид. латентность, сек</label>
+            <NumberField
+              fieldId="assumed-latency"
+              value={load.assumed_latency_sec}
+              min={0}
+              onCommit={(n) => setLoad({ assumed_latency_sec: n })}
+            />
+          </div>
+        )}
         {maxSearch && (
           <>
             <div className="field" style={{ width: 130, flex: "none" }}>
               <label>Кол-во ступеней</label>
-              <input
-                type="number"
-                min={1}
+              <NumberField
+                fieldId="load-steps"
                 value={load.steps}
-                onChange={(e) => setLoad({ steps: Math.max(1, Number(e.target.value)) })}
+                min={1}
+                onCommit={(n) => setLoad({ steps: Math.max(1, n) })}
               />
             </div>
             <div className="field" style={{ width: 150, flex: "none" }}>
               <label>Длительность ступени, с</label>
-              <input
-                type="number"
-                min={1}
+              <NumberField
+                fieldId="step-duration"
                 value={load.step_duration_sec}
-                onChange={(e) => setLoad({ step_duration_sec: Math.max(1, Number(e.target.value)) })}
+                min={1}
+                onCommit={(n) => setLoad({ step_duration_sec: Math.max(1, n) })}
               />
             </div>
           </>
         )}
       </div>
       <div className="hint">
-        {maxSearch
-          ? "Поле «Целевой RPS» — ПИК. Лестница поднимается от пик/N до пика за N ступеней."
-          : "Каждая группа = Concurrency Thread Group + Throughput Shaping Timer (ramp-up → удержание)."}
+        {meta.modeHint(maxSearch)}
+        {!meta.needsLatency && " Пул пользователей не задаётся: они создаются по мере поступления."}
       </div>
 
       {!maxSearch && (
@@ -215,11 +276,12 @@ export function Step4Intensity({
           {sharedRamp && first && (
             <div className="field" style={{ width: 140, flex: "none" }}>
               <label>Ramp-up (общий), с</label>
-              <input
-                type="number"
-                min={0}
+              <NumberField
+                fieldId="shared-ramp"
                 value={first.ramp_up_sec}
-                onChange={(e) => setAllGroups({ ramp_up_sec: Number(e.target.value) })}
+                min={0}
+                onCommit={(n) => setAllGroups({ ramp_up_sec: n })}
+                onValidity={markField}
               />
             </div>
           )}
@@ -241,11 +303,12 @@ export function Step4Intensity({
           {sharedHold && first && (
             <div className="field" style={{ width: 140, flex: "none" }}>
               <label>Удержание (общее), с</label>
-              <input
-                type="number"
-                min={1}
+              <NumberField
+                fieldId="shared-hold"
                 value={first.hold_sec}
-                onChange={(e) => setAllGroups({ hold_sec: Number(e.target.value) })}
+                min={1}
+                onCommit={(n) => setAllGroups({ hold_sec: n })}
+                onValidity={markField}
               />
             </div>
           )}
@@ -260,28 +323,31 @@ export function Step4Intensity({
         <div className="peak-box">
           <div className="lbl">Суммарный пик</div>
           <div className="val">{formatRps(peakTotal)}</div>
-          <div className="lbl">запросов/сек</div>
+          <div className="lbl">HTTP запросов/сек</div>
         </div>
       </div>
 
       <h3 style={{ fontSize: 13, marginTop: 16 }}>Интенсивность по группам</h3>
       <p className="muted" style={{ marginTop: -6 }}>
-        Связанные корреляцией и общим CSV запросы объединены — интенсивность у них
-        единая. Внутри группы задайте «×N» для запроса, чтобы он выполнялся чаще
-        (Loop Controller): напр. 1× получить счёт → 5× запросить по нему данные.
+        Связанные корреляцией и общим CSV запросы — одна группа, один целевой HTTP RPS.
+        «×N» — сколько раз запрос бьётся за итерацию ({meta.short}: {meta.repeatTitle}). Доля
+        ≈RPS пропорциональна ×N. Пример: 1× логин → 5× витрина.
       </p>
       <div className="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Группа (тред-группа)</th>
-            <th style={{ width: 120 }}>Целевой RPS {maxSearch ? "(пик)" : ""}</th>
+            <th>Группа</th>
+            <th style={{ width: 150 }}>Целевой RPS (HTTP){maxSearch ? " · пик" : ""}</th>
             {!maxSearch && <th style={{ width: 110 }}>Ramp-up, с</th>}
             {!maxSearch && <th style={{ width: 120 }}>Удержание, с</th>}
           </tr>
         </thead>
         <tbody>
-          {groups.map((g, i) => (
+          {groups.map((g, i) => {
+            const samples = samplesPerIteration(g.requests);
+            const httpRps = groupIntensity(g).target_rps;
+            return (
             <tr key={g.key}>
               <td>
                 <span
@@ -297,166 +363,87 @@ export function Step4Intensity({
                 {g.requests.map((r) => (
                   <span key={r.id} style={{ marginRight: 10, whiteSpace: "nowrap" }}>
                     <span className={`method ${r.method}`}>{r.method}</span> {r.name}
-                    {g.requests.length > 1 && (
-                      <span className="muted" style={{ marginLeft: 4 }}>
-                        ×
-                        <input
-                          type="number"
-                          min={1}
-                          title="повторов за итерацию (Loop Controller)"
-                          style={{ width: 46, padding: "2px 4px", marginLeft: 2 }}
-                          value={r.repeat}
-                          onChange={(e) =>
-                            updateRequest(r.id, { repeat: Math.max(1, Number(e.target.value)) })
-                          }
-                        />
-                      </span>
-                    )}
+                    <span className="muted" style={{ marginLeft: 4 }}>
+                      ×
+                      <NumberField
+                        fieldId={`repeat-${r.id}`}
+                        value={r.repeat}
+                        min={1}
+                        title={meta.repeatTitle}
+                        style={{ width: 46, padding: "2px 4px", marginLeft: 2 }}
+                        onCommit={(n) => updateRequest(r.id, { repeat: n })}
+                        onValidity={markField}
+                      />
+                    </span>
                     <span
                       className="tag"
-                      title="расчётный RPS запроса (доля от целевого RPS группы с учётом повторов)"
+                      title="доля HTTP RPS запроса от целевого RPS группы (∝ ×N)"
                       style={{ marginLeft: 4 }}
                     >
-                      ≈{formatRps(reqRps(g, r.repeat))} rps
+                      ≈{formatRps(reqRps(g, r.repeat))} HTTP/с
                     </span>
                   </span>
                 ))}
                 {g.datasetIds.length > 0 && <span className="badge">CSV</span>}
               </td>
               <td>
-                <input
-                  type="number"
-                  step="any"
+                <NumberField
+                  fieldId={`rps-${g.key}`}
+                  value={httpRps}
                   min={0}
-                  value={groupIntensity(g).target_rps}
-                  onChange={(e) =>
-                    setGroupIntensity(g.key, { target_rps: Number(e.target.value) })
-                  }
+                  step="any"
+                  onCommit={(n) => setGroupIntensity(g.key, { target_rps: n })}
+                  onValidity={markField}
                 />
+                {meta.derivedLabel && samples > 1 && (
+                  <div className="muted" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.35 }}>
+                    {meta.derivedLabel} {formatRps(arrivalRate(httpRps, samples))}/с
+                    <br />
+                    {samples} HTTP за итерацию
+                  </div>
+                )}
               </td>
               {!maxSearch && (
                 <td>
-                  <input
-                    type="number"
+                  <NumberField
+                    fieldId={`ramp-${g.key}`}
+                    value={groupIntensity(g).ramp_up_sec}
                     min={0}
                     disabled={sharedRamp}
                     title={sharedRamp ? "управляется общим значением выше" : undefined}
-                    value={groupIntensity(g).ramp_up_sec}
-                    onChange={(e) =>
-                      setGroupIntensity(g.key, { ramp_up_sec: Number(e.target.value) })
-                    }
+                    onCommit={(n) => setGroupIntensity(g.key, { ramp_up_sec: n })}
+                    onValidity={markField}
                   />
                 </td>
               )}
               {!maxSearch && (
                 <td>
-                  <input
-                    type="number"
+                  <NumberField
+                    fieldId={`hold-${g.key}`}
+                    value={groupIntensity(g).hold_sec}
                     min={1}
                     disabled={sharedHold}
                     title={sharedHold ? "управляется общим значением выше" : undefined}
-                    value={groupIntensity(g).hold_sec}
-                    onChange={(e) =>
-                      setGroupIntensity(g.key, { hold_sec: Number(e.target.value) })
-                    }
+                    onCommit={(n) => setGroupIntensity(g.key, { hold_sec: n })}
+                    onValidity={markField}
                   />
                 </td>
               )}
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
       </div>
 
-      <h3 style={{ fontSize: 13, marginTop: 18 }}>Prometheus (JMeter, Колесников)</h3>
-      <p className="muted" style={{ marginTop: -6 }}>
-        Backend Listener <code>com.github.kolesnikovm.PrometheusListener</code> добавляется в
-        каждый .jmx по умолчанию. Метрики на{" "}
-        <code>http://localhost:{prom.exporter_port}/metrics</code> (хост задаётся при запуске JMeter).
-      </p>
-      <div className="row" style={{ alignItems: "flex-end" }}>
-        <div className="field" style={{ width: 130, flex: "none" }}>
-          <label>Порт exporter</label>
-          <input
-            type="number"
-            min={1}
-            max={65535}
-            value={prom.exporter_port}
-            onChange={(e) => setPrometheus({ exporter_port: Number(e.target.value) })}
-          />
-        </div>
-        <div className="field" style={{ width: 100, flex: "none" }}>
-          <label>runId</label>
-          <input
-            value={prom.run_id}
-            onChange={(e) => setPrometheus({ run_id: e.target.value })}
-          />
-        </div>
-        <div className="field" style={{ flex: 1, minWidth: 200 }}>
-          <label>samplersRegExp</label>
-          <input
-            value={prom.samplers_reg_exp}
-            placeholder=".*"
-            onChange={(e) => setPrometheus({ samplers_reg_exp: e.target.value })}
-          />
-        </div>
-      </div>
-      <div className="hint">
-        <code>testName</code> = название сценария ({scenario.name || "scenario"}). Плагин:{" "}
-        <code>jmeter-prometheus-listener</code> в <code>lib/ext</code>.
-      </div>
+      <MetricsSection
+        engine={engine}
+        scenarioName={scenario.name}
+        prom={prom}
+        setPrometheus={setPrometheus}
+      />
 
-      <h3 style={{ fontSize: 13, marginTop: 18 }}>AutoStop (авто-остановка теста)</h3>
-      <div className="row" style={{ alignItems: "flex-end" }}>
-        <div className="field" style={{ flex: "none" }}>
-          <label>Включить</label>
-          <label className="inline" style={{ textTransform: "none" }}>
-            <input
-              type="checkbox"
-              style={{ width: "auto" }}
-              checked={autostop.enabled}
-              onChange={(e) => setAutostop({ enabled: e.target.checked })}
-            />
-            <span className="muted">плагин jpgc-autostop</span>
-          </label>
-        </div>
-        {autostop.enabled && (
-          <>
-            <div className="field" style={{ width: 130, flex: "none" }}>
-              <label>Ошибки, %</label>
-              <input
-                type="number"
-                value={autostop.error_rate_pct}
-                onChange={(e) => setAutostop({ error_rate_pct: Number(e.target.value) })}
-              />
-            </div>
-            <div className="field" style={{ width: 130, flex: "none" }}>
-              <label>...в течение, с</label>
-              <input
-                type="number"
-                value={autostop.error_rate_sec}
-                onChange={(e) => setAutostop({ error_rate_sec: Number(e.target.value) })}
-              />
-            </div>
-            <div className="field" style={{ width: 150, flex: "none" }}>
-              <label>Ср. отклик, мс (0=выкл)</label>
-              <input
-                type="number"
-                value={autostop.avg_response_ms}
-                onChange={(e) => setAutostop({ avg_response_ms: Number(e.target.value) })}
-              />
-            </div>
-            <div className="field" style={{ width: 130, flex: "none" }}>
-              <label>...в течение, с</label>
-              <input
-                type="number"
-                value={autostop.avg_response_sec}
-                onChange={(e) => setAutostop({ avg_response_sec: Number(e.target.value) })}
-              />
-            </div>
-          </>
-        )}
-      </div>
+      <AutostopSection engine={engine} autostop={autostop} setAutostop={setAutostop} />
 
       {error && (
         <div className="error" style={{ marginTop: 12 }}>
@@ -475,9 +462,14 @@ export function Step4Intensity({
           Собрано и скачано: <code>{done}</code>.{" "}
           {engine === "k6" ? (
             <>
-              Запуск: <code>k6 run {done.endsWith(".zip") ? "script.js" : done}</code>. Нужен
-              доступ в интернет для jslib-импортов (k6-utils
-              {done.endsWith(".zip") ? ", papaparse" : ""}).
+              Распакуйте архив и запустите <code>{runCommand(engine, done)}</code>. Библиотеки
+              лежат в <code>lib/</code>, доступ к jslib.k6.io не нужен.
+            </>
+          ) : engine === "gatling" ? (
+            <>
+              В архиве — Maven-проект: <code>pom.xml</code>, <code>PortalSimulation.java</code>,{" "}
+              <code>gatling.conf</code> и CSV. Запуск: <code>{runCommand(engine, done)}</code>{" "}
+              (JDK 17+, Gatling подтянется как зависимость).
             </>
           ) : done.endsWith(".zip") ? (
             <>
@@ -500,7 +492,7 @@ export function Step4Intensity({
         </div>
       )}
 
-      <h3 style={{ fontSize: 13, marginTop: 18 }}>Движок и сборка</h3>
+      <h3 style={{ fontSize: 13, marginTop: 18 }}>Сборка · {meta.short}</h3>
 
       <BuildHistory
         refreshKey={historyKey}
@@ -509,24 +501,8 @@ export function Step4Intensity({
         defaultEngine={engine}
       />
 
-      <div className="inline" style={{ marginBottom: 12 }}>
-        <div
-          className={`pill-source ${engine === "jmeter" ? "active" : ""}`}
-          onClick={() => setEngine("jmeter")}
-        >
-          JMeter (.jmx)
-        </div>
-        <div
-          className={`pill-source ${engine === "k6" ? "active" : ""}`}
-          onClick={() => setEngine("k6")}
-        >
-          k6 (.js)
-        </div>
-      </div>
       <div className="hint" style={{ marginTop: -6 }}>
-        {engine === "k6"
-          ? "k6: каждая группа — scenario с ramping-arrival-rate (по RPS); корреляция, датасеты (SharedArray), checks и AutoStop→thresholds переносятся автоматически."
-          : "JMeter: Concurrency Thread Group + Throughput Shaping Timer на каждую группу."}
+        {meta.buildHint}
       </div>
 
       {readiness.blockers > 0 && (
@@ -544,22 +520,22 @@ export function Step4Intensity({
           <button
             className="ghost"
             onClick={build}
-            disabled={building || saving || groups.length === 0}
-            title="Скачать .jmx/.js без записи в историю сборок"
+            disabled={building || saving || groups.length === 0 || !intensityReady}
+            title={`Скачать ${meta.artifact} без записи в историю сборок`}
           >
             {building ? "Собираем…" : "Выгрузить скрипт"}
           </button>
           <button
             className="ghost"
             onClick={saveOnly}
-            disabled={building || saving || groups.length === 0}
+            disabled={building || saving || groups.length === 0 || !intensityReady}
           >
             {saving ? "…" : "Сохранить сборку"}
           </button>
           <button
             className="success"
             onClick={goToRun}
-            disabled={building || saving || groups.length === 0 || !onGoToRun}
+            disabled={building || saving || groups.length === 0 || !onGoToRun || !intensityReady}
             title={
               readiness.blockers > 0
                 ? `Есть ${readiness.blockers} блокер(ов) в пульсе — можно сохранить и перейти к запуску`

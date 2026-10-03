@@ -92,6 +92,21 @@ public class PortalMetrics {
     }
 
     /**
+     * Прогон анализа целиком, включая ожидание сервиса analysis.
+     *
+     * @param trigger manual — кнопка в UI; auto — автозапуск после завершения теста
+     * @param verdict вердикт отчёта или {@code error}, если анализ не дошёл до конца
+     */
+    public void recordAnalysis(String trigger, String verdict, long durationNanos) {
+        Timer.builder("portal.analysis.duration")
+                .description("Длительность анализа прогона")
+                .tag("trigger", trigger)
+                .tag("verdict", verdict)
+                .register(registry)
+                .record(durationNanos, TimeUnit.NANOSECONDS);
+    }
+
+    /**
      * Попытка входа. Всплеск failure — либо сломалась интеграция с LDAP, либо перебор паролей.
      *
      * @param method local или ldap

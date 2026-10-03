@@ -13,6 +13,10 @@ public record TestRunDto(
         String buildId,
         String scriptId,
         String targetUrl,
+        String targetCluster,
+        String targetNamespace,
+        String targetService,
+        String targetContainer,
         Map<String, Object> params,
         Map<String, String> labels,
         String status,
@@ -23,6 +27,7 @@ public record TestRunDto(
         Instant endedAt,
         String errorMessage,
         Instant createdAt,
-        List<TestRunEventDto> events
+        List<TestRunEventDto> events,
+        RunVerdictDto verdict
 ) {
 }

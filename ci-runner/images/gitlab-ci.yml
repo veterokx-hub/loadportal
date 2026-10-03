@@ -1,0 +1,259 @@
+# Сборка, скан, подпись и самопроверка образов.
+# Включается из корневого .gitlab-ci.yml.
+#
+# Запуск: Run pipeline с переменной LT_PIPELINE=images
+# либо push в ветку по умолчанию, если изменился каталог images/.
+#
+# Переменные проекта (в git их нет):
+#   LT_REGISTRY                  куда пушить, без схемы. Не registry.corp.example.
+#   LT_REGISTRY_USER/PASSWORD    либо встроенные CI_REGISTRY_USER/PASSWORD
+#   LT_KANIKO_IMAGE              kaniko debug по digest из вашего реестра
+#   LT_TRIVY_IMAGE               trivy по digest
+#   LT_COSIGN_IMAGE              cosign по digest
+#   COSIGN_PRIVATE_KEY           file variable
+#   COSIGN_PUBLIC_KEY            file variable, если нужно проверить подпись в этом же пайплайне
+#   COSIGN_PASSWORD              если ключ зашифрован
+#   MAVEN_SETTINGS               file variable, settings.xml Nexus для прогрева Gatling
+#   TRIVY_DB_REPOSITORY          зеркало базы trivy, если GitHub из кластера закрыт
+#
+# Джобы kaniko/trivy/cosign идут на теге lt-images (root). Selftest — на lt-control
+# (uid 10001, как у прогона). Нода сборки — linux/amd64.
+# После зелёного image-digests четыре строки LT_IMAGE_* переносятся в .gitlab-ci.yml
+# отдельным MR. Сам пайплайн файлы репозитория не коммитит.
+
+.rules-images: &rules-images
+  - if: '$LT_PIPELINE == "images"'
+    when: on_success
+  - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    changes: [images/**/*]
+    when: on_success
+  - when: never
+
+.image-build:
+  stage: image-build
+  tags: [lt-images]
+  timeout: 60m
+  rules: *rules-images
+  interruptible: true
+  retry: 0
+  image:
+    name: $LT_KANIKO_IMAGE
+    entrypoint: [""]
+  variables:
+    KUBERNETES_CPU_REQUEST: "1"
+    KUBERNETES_CPU_LIMIT: "1"
+    KUBERNETES_MEMORY_REQUEST: "2Gi"
+    KUBERNETES_MEMORY_LIMIT: "2Gi"
+
+.image-scan:
+  stage: image-scan
+  tags: [lt-images]
+  rules: *rules-images
+  interruptible: true
+  retry: 0
+  image:
+    name: $LT_TRIVY_IMAGE
+    entrypoint: [""]
+
+.image-sign:
+  stage: image-sign
+  tags: [lt-images]
+  rules: *rules-images
+  interruptible: true
+  retry: 0
+  image:
+    name: $LT_COSIGN_IMAGE
+    entrypoint: [""]
+
+image-base:
+  extends: .image-build
+  script: [bash images/ci-kaniko.sh base]
+  artifacts:
+    reports:
+      dotenv: digests/base.env
+    expire_in: 7 days
+
+image-jmeter:
+  extends: .image-build
+  needs: [image-base]
+  script: [bash images/ci-kaniko.sh jmeter]
+  artifacts:
+    reports:
+      dotenv: digests/jmeter.env
+    expire_in: 7 days
+
+image-k6:
+  extends: .image-build
+  needs: [image-base]
+  script: [bash images/ci-kaniko.sh k6]
+  artifacts:
+    reports:
+      dotenv: digests/k6.env
+    expire_in: 7 days
+
+image-gatling:
+  extends: .image-build
+  needs: [image-base]
+  variables:
+    KUBERNETES_CPU_REQUEST: "2"
+    KUBERNETES_CPU_LIMIT: "2"
+    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_LIMIT: "4Gi"
+  script: [bash images/ci-kaniko.sh gatling]
+  artifacts:
+    reports:
+      dotenv: digests/gatling.env
+    expire_in: 7 days
+
+image-tools:
+  extends: .image-build
+  needs: [image-base]
+  script: [bash images/ci-kaniko.sh tools]
+  artifacts:
+    reports:
+      dotenv: digests/tools.env
+    expire_in: 7 days
+
+image-scan-base:
+  extends: .image-scan
+  needs: [image-base]
+  script:
+    - bash images/ci-scan.sh "$LT_REF_BASE"
+
+image-scan-jmeter:
+  extends: .image-scan
+  needs: [image-jmeter]
+  script:
+    - bash images/ci-scan.sh "$LT_REF_JMETER"
+
+image-scan-k6:
+  extends: .image-scan
+  needs: [image-k6]
+  script:
+    - bash images/ci-scan.sh "$LT_REF_K6"
+
+image-scan-gatling:
+  extends: .image-scan
+  needs: [image-gatling]
+  script:
+    - bash images/ci-scan.sh "$LT_REF_GATLING"
+
+image-scan-tools:
+  extends: .image-scan
+  needs: [image-tools]
+  script:
+    - bash images/ci-scan.sh "$LT_REF_TOOLS"
+
+image-sign-base:
+  extends: .image-sign
+  needs: [image-base, image-scan-base]
+  script:
+    - bash images/ci-sign.sh "$LT_REF_BASE"
+
+image-sign-jmeter:
+  extends: .image-sign
+  needs: [image-jmeter, image-scan-jmeter]
+  script:
+    - bash images/ci-sign.sh "$LT_REF_JMETER"
+
+image-sign-k6:
+  extends: .image-sign
+  needs: [image-k6, image-scan-k6]
+  script:
+    - bash images/ci-sign.sh "$LT_REF_K6"
+
+image-sign-gatling:
+  extends: .image-sign
+  needs: [image-gatling, image-scan-gatling]
+  script:
+    - bash images/ci-sign.sh "$LT_REF_GATLING"
+
+image-sign-tools:
+  extends: .image-sign
+  needs: [image-tools, image-scan-tools]
+  script:
+    - bash images/ci-sign.sh "$LT_REF_TOOLS"
+
+image-selftest-base:
+  stage: image-selftest
+  tags: [lt-control]
+  rules: *rules-images
+  interruptible: true
+  retry: 0
+  image: $LT_REF_BASE
+  needs: [image-base, image-scan-base]
+  script: [bash images/selftest-inside.sh base]
+
+image-selftest-jmeter:
+  stage: image-selftest
+  tags: [lt-control]
+  rules: *rules-images
+  interruptible: true
+  retry: 0
+  image: $LT_REF_JMETER
+  needs: [image-jmeter, image-scan-jmeter]
+  script: [bash images/selftest-inside.sh jmeter]
+
+image-selftest-k6:
+  stage: image-selftest
+  tags: [lt-control]
+  rules: *rules-images
+  interruptible: true
+  retry: 0
+  image: $LT_REF_K6
+  needs: [image-k6, image-scan-k6]
+  script: [bash images/selftest-inside.sh k6]
+
+image-selftest-gatling:
+  stage: image-selftest
+  tags: [lt-control]
+  rules: *rules-images
+  interruptible: true
+  retry: 0
+  image: $LT_REF_GATLING
+  needs: [image-gatling, image-scan-gatling]
+  variables:
+    KUBERNETES_CPU_REQUEST: "1"
+    KUBERNETES_CPU_LIMIT: "1"
+    KUBERNETES_MEMORY_REQUEST: "2Gi"
+    KUBERNETES_MEMORY_LIMIT: "2Gi"
+  script: [bash images/selftest-inside.sh gatling]
+
+image-selftest-tools:
+  stage: image-selftest
+  tags: [lt-control]
+  rules: *rules-images
+  interruptible: true
+  retry: 0
+  image: $LT_REF_TOOLS
+  needs: [image-tools, image-scan-tools]
+  script: [bash images/selftest-inside.sh tools]
+
+image-digests:
+  stage: image-selftest
+  tags: [lt-control]
+  rules: *rules-images
+  image: $LT_REF_TOOLS
+  needs:
+    - image-base
+    - image-jmeter
+    - image-k6
+    - image-gatling
+    - image-tools
+    - image-sign-base
+    - image-sign-jmeter
+    - image-sign-k6
+    - image-sign-gatling
+    - image-sign-tools
+    - image-selftest-base
+    - image-selftest-jmeter
+    - image-selftest-k6
+    - image-selftest-gatling
+    - image-selftest-tools
+  script:
+    - |
+      echo "Перенесите в .gitlab-ci.yml пайплайна прогонов:"
+      echo "LT_IMAGE_JMETER=$LT_REF_JMETER"
+      echo "LT_IMAGE_K6=$LT_REF_K6"
+      echo "LT_IMAGE_GATLING=$LT_REF_GATLING"
+      echo "LT_IMAGE_CI_TOOLS=$LT_REF_TOOLS"

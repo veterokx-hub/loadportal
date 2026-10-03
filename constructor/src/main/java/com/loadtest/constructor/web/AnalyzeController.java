@@ -18,6 +18,7 @@ public class AnalyzeController {
     /** Разбор спецификации (OpenAPI/Postman) в черновик сценария. Без сохранения. */
     @PostMapping("/analyze")
     public Scenario analyze(@RequestBody AnalyzeRequest request) {
+        FetchUrls.requireHttpUrl(request.url());
         return analyzerClient.analyze(request);
     }
 }

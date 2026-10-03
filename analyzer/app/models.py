@@ -69,6 +69,7 @@ class Generator(BaseModel):
     length: Optional[int] = None
     chars: Optional[str] = None
     start: Optional[int] = None
+    increment: Optional[int] = None
     format: Optional[str] = None
 
 
@@ -103,6 +104,7 @@ class Param(BaseModel):
     schema_type: Optional[str] = None
     example: Optional[str] = None
     required: bool = False
+    quoted: bool = False  # JSON body: подставлять значение в кавычках
 
 
 # --- Корреляция (источник) ----------------------------------------------------------
@@ -163,11 +165,17 @@ class AutoStop(BaseModel):
 
 
 class PrometheusConfig(BaseModel):
-    """Backend Listener Prometheus (kolesnikovm/jmeter-prometheus-listener)."""
+    """JMeter InfluxdbBackendListenerClient → VictoriaMetrics. run_id ещё читает Gatling."""
     exporter_port: int = 9001
     run_id: str = "1"
     samplers_reg_exp: str = ".*"
     slo_levels: str = "0.1;1"
+    influxdb_url: str = "http://victoriametrics:8428/write?db=jmeter"
+    application: str = ""
+    measurement: str = "jmeter"
+    percentiles: str = "99;95;90"
+    summary_only: bool = False
+    influxdb_token: str = ""
 
 
 # --- Запрос и сценарий --------------------------------------------------------------
@@ -178,6 +186,7 @@ class Request(BaseModel):
     name: str
     method: str
     path: str
+    url: Optional[str] = None
     headers: list[KeyValue] = Field(default_factory=list)
     query_params: list[Param] = Field(default_factory=list)
     body: Body = Field(default_factory=Body)

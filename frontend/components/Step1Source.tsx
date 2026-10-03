@@ -4,6 +4,7 @@ import { useState } from "react";
 import { analyze } from "@/lib/api";
 import type { Scenario, SourceType } from "@/lib/types";
 import { BuildHistory } from "@/components/BuildHistory";
+import { FileUploadButton } from "@/components/FileUploadButton";
 
 /** Пустой сценарий для сборки «с чистого листа» — без спецификации. */
 function blankScenario(name: string): Scenario {
@@ -20,7 +21,18 @@ function blankScenario(name: string): Scenario {
       avg_response_ms: 0,
       avg_response_sec: 0,
     },
-    prometheus: { exporter_port: 9001, run_id: "1", samplers_reg_exp: ".*", slo_levels: "0.1;1" },
+    prometheus: {
+      exporter_port: 9001,
+      run_id: "1",
+      samplers_reg_exp: ".*",
+      slo_levels: "0.1;1",
+      influxdb_url: "http://victoriametrics:8428/write?db=jmeter",
+      application: "",
+      measurement: "jmeter",
+      percentiles: "99;95;90",
+      summary_only: false,
+      influxdb_token: "",
+    },
     requests: [],
   };
 }
@@ -42,9 +54,10 @@ export function Step1Source({
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
 
   const isBlank = sourceType === "blank";
-  // Postman-коллекция принимается только как JSON-содержимое (без URL).
+  // Postman-коллекция — файл или JSON, без URL.
   const inputMode = sourceType === "postman" ? "content" : mode;
 
   async function run() {
@@ -71,6 +84,18 @@ export function Step1Source({
 
   const canRun =
     isBlank || (inputMode === "url" ? url.trim().length > 0 : content.trim().length > 0);
+
+  function onPickFile(file: File | null) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setContent(typeof reader.result === "string" ? reader.result : "");
+      setFileName(file.name);
+      setError(null);
+    };
+    reader.onerror = () => setError("Не удалось прочитать файл");
+    reader.readAsText(file);
+  }
 
   return (
     <div className="panel">
@@ -145,14 +170,28 @@ export function Step1Source({
               ? "JSON Postman-коллекции"
               : "Содержимое спецификации (JSON/YAML)"}
           </label>
+          <div className="inline" style={{ marginBottom: 10, gap: 10, alignItems: "center" }}>
+            <FileUploadButton
+              accept={
+                sourceType === "postman"
+                  ? ".json,application/json"
+                  : ".json,.yaml,.yml,application/json,text/yaml,text/plain"
+              }
+              onPick={onPickFile}
+            />
+            {fileName && <span className="hint">{fileName}</span>}
+          </div>
           <textarea
             placeholder={
               sourceType === "postman"
-                ? "Вставьте JSON экспортированной Postman-коллекции..."
+                ? "Вставьте JSON экспортированной Postman-коллекции или загрузите файл…"
                 : "Вставьте JSON/YAML спецификации..."
             }
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={(e) => {
+              setContent(e.target.value);
+              setFileName(null);
+            }}
           />
         </div>
       )}

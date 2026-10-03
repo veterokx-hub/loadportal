@@ -18,19 +18,21 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
     open-in-view: false
   liquibase:
     enabled: false
   jackson:
+    use-jackson2-defaults: true
     property-naming-strategy: SNAKE_CASE
     default-property-inclusion: non_null
     mapper:
       accept-case-insensitive-enums: true
 
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: false
   endpoints:
     web:
       base-path: /
@@ -43,8 +45,32 @@ management:
       application: ${spring.application.name}
 
 loadtest:
+  cors:
+    # Только Origin из адресной строки браузера. Не k8s Service, не «*».
+    allowed-origins: ${LOADTEST_CORS_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
+  internal-token: ${LOADTEST_INTERNAL_TOKEN:}
   http:
     connect-timeout-ms: 5000
     read-timeout-ms: 60000
+    internal-read-timeout-ms: 180000
     probe-connect-timeout-ms: 2000
     probe-read-timeout-ms: 2000
+  analysis:
+    # Автозапуск анализа после завершения прогона. Молча пропускается, если у прогона
+    # не заполнена цель (cluster/namespace/service) — без неё анализировать нечего.
+    auto-on-finish: ${LOADTEST_ANALYSIS_AUTO:true}
+  # Несекреты S3/GitLab. Пустое значение не перекрывает Consul и БД.
+  # Секреты (ключи, токены) сюда не класть — Vault / env.
+  s3:
+    endpoint: ${S3_ENDPOINT:}
+    public-endpoint: ${S3_PUBLIC_ENDPOINT:}
+    bucket: ${S3_BUCKET:}
+    region: ${S3_REGION:}
+  gitlab:
+    base-url: ${GITLAB_BASE_URL:}
+    project-id: ${GITLAB_PROJECT_ID:}
+    repository: ${GITLAB_REPOSITORY:}
+    ref: ${GITLAB_REF:}
+
+analysis:
+  base-url: ${ANALYSIS_BASE_URL:http://localhost:8003}

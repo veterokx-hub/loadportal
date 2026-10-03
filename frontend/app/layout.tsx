@@ -5,8 +5,9 @@ export const metadata: Metadata = {
   title: "НТ · Портал нагрузочного тестирования",
   description: "Подготовка сценариев и запуск нагрузочного тестирования (JMeter / k6)",
   icons: {
-    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
-    shortcut: "/favicon.svg",
+    icon: [{ url: "/logo.jpg", type: "image/jpeg" }],
+    shortcut: "/logo.jpg",
+    apple: "/logo.jpg",
   },
 };
 

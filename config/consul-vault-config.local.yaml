@@ -19,7 +19,9 @@ loadtest:
       service-constructor: loadtest-constructor
       service-analyzer: loadtest-analyzer
       service-k6: loadtest-k6-generator
+      service-gatling: loadtest-gatling-generator
       service-jmeter: loadtest-jmeter-builder
+      service-analysis: loadtest-analysis
       service-postgres: loadtest-postgres
 
     vault:
@@ -34,5 +36,12 @@ loadtest:
       orchestrator-url: http://orchestrator:8082
       analyzer-url: http://analyzer:8000
       k6-generator-url: http://k6-generator:8001
+      gatling-generator-url: http://gatling-generator:8002
       jmeter-builder-url: http://jmeter-builder:8081
+      analysis-url: http://analysis:8003
       postgres-jdbc-url: jdbc:postgresql://postgres:5432/loadtest
+
+  # Модуль «Анализ»: автозапуск отчёта после завершения прогона.
+  # Пропускается, если у прогона не заполнена цель в кластере.
+  analysis:
+    auto-on-finish: true

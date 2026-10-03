@@ -172,7 +172,9 @@ def _build_request(
     resolver: _RefResolver,
 ) -> Request:
     op_id = op.get("operationId") or f"{method.lower()}_{path}"
-    name = f"{method} {path}"
+    desc = " ".join(str(op.get("description") or "").split())
+    summary = " ".join(str(op.get("summary") or "").split())
+    name = (desc or summary or f"{method} {path}")[:160]
 
     headers: list[KeyValue] = []
     query_params: list[Param] = []

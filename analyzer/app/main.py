@@ -7,18 +7,23 @@
 """
 from __future__ import annotations
 
+import hmac
 import os
 import time
 from contextlib import asynccontextmanager
+from urllib.parse import urljoin
 
 import httpx
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from .fetch_guard import assert_safe_fetch_url
 from .metrics import ANALYZE_DURATION, ANALYZE_TOTAL, FETCH_DURATION, REQUESTS_IN_DRAFT
 from .models import AnalyzeRequest, ScenarioDraft, SourceType
 from .openapi_parser import parse_openapi
 from .postman_parser import parse_postman
+
+_INTERNAL_TOKEN = os.getenv("LOADTEST_INTERNAL_TOKEN", "").strip()
 
 # Состояние приложения: один AsyncClient на весь процесс.
 # Создавать клиент на каждый запрос — значит поднимать новый пул TCP/TLS каждый раз;
@@ -32,7 +37,7 @@ async def lifespan(app: FastAPI):
     # verify=False: в тестовой среде часто стоят corp CA / self-signed сертификаты.
     _app_state["http"] = httpx.AsyncClient(
         timeout=20.0,
-        follow_redirects=True,
+        follow_redirects=False,
         verify=False,
     )
     try:
@@ -74,8 +79,22 @@ def metrics() -> Response:
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+def _require_internal(token: str | None) -> None:
+    if not _INTERNAL_TOKEN:
+        return
+    if not _tokens_equal(_INTERNAL_TOKEN, token or ""):
+        raise HTTPException(status_code=401, detail="Требуется внутренний токен")
+
+
+def _tokens_equal(expected: str, provided: str) -> bool:
+    left = hmac.new(b"ltp", expected.encode(), "sha256").digest()
+    right = hmac.new(b"ltp", provided.encode(), "sha256").digest()
+    return hmac.compare_digest(left, right)
+
+
 @app.post("/analyze", response_model=ScenarioDraft)
-async def analyze(req: AnalyzeRequest) -> ScenarioDraft:
+async def analyze(req: AnalyzeRequest, request: Request) -> ScenarioDraft:
+    _require_internal(request.headers.get("X-Internal-Token"))
     source = req.source_type.value if isinstance(req.source_type, SourceType) else str(req.source_type)
     started = time.perf_counter()
     try:
@@ -104,7 +123,7 @@ async def analyze(req: AnalyzeRequest) -> ScenarioDraft:
         ANALYZE_DURATION.labels(source_type=source, result="failure").observe(
             time.perf_counter() - started
         )
-        raise HTTPException(status_code=422, detail=f"Не удалось разобрать спецификацию: {exc}") from exc
+        raise HTTPException(status_code=422, detail="Не удалось разобрать спецификацию") from exc
 
 
 def _is_openapi_spec(text: str) -> bool:
@@ -193,7 +212,9 @@ async def _resolve_content(req: AnalyzeRequest) -> str:
         async def _fetch_spec(u: str, depth: int = 0) -> str | None:
             """Возвращает текст спеки по URL, разворачивая swagger-config при необходимости."""
             try:
-                r = await client.get(u)
+                r = await _get_checked(client, u)
+            except HTTPException:
+                return None
             except httpx.HTTPError:
                 return None
             if r.status_code != 200:
@@ -208,7 +229,7 @@ async def _resolve_content(req: AnalyzeRequest) -> str:
                         return found
             return None
 
-        resp = await client.get(req.url)
+        resp = await _get_checked(client, req.url)
         resp.raise_for_status()
         text = resp.text
         if _is_openapi_spec(text):
@@ -238,12 +259,31 @@ async def _resolve_content(req: AnalyzeRequest) -> str:
                 "(например .../v3/api-docs) или вставьте содержимое вручную."
             ),
         )
+    except HTTPException:
+        FETCH_DURATION.labels(result="failure").observe(time.perf_counter() - fetch_started)
+        raise
     except httpx.ConnectError as exc:
         FETCH_DURATION.labels(result="failure").observe(time.perf_counter() - fetch_started)
-        raise HTTPException(status_code=400, detail=f"Не удалось подключиться к {req.url}: {exc}") from exc
+        raise HTTPException(status_code=400, detail="Не удалось подключиться по URL") from exc
     except httpx.HTTPError as exc:
         FETCH_DURATION.labels(result="failure").observe(time.perf_counter() - fetch_started)
-        raise HTTPException(status_code=400, detail=f"Не удалось загрузить {req.url}: {exc}") from exc
+        raise HTTPException(status_code=400, detail="Не удалось загрузить URL") from exc
+
+
+async def _get_checked(client: httpx.AsyncClient, url: str) -> httpx.Response:
+    """GET с проверкой каждого hop редиректа (metadata/compose DNS)."""
+    current = url
+    for _ in range(4):
+        assert_safe_fetch_url(current)
+        resp = await client.get(current)
+        if resp.is_redirect:
+            loc = resp.headers.get("location")
+            if not loc:
+                return resp
+            current = urljoin(str(resp.url), loc)
+            continue
+        return resp
+    raise HTTPException(status_code=400, detail="Слишком много редиректов")
 
 
 def enrich(draft: ScenarioDraft) -> ScenarioDraft:

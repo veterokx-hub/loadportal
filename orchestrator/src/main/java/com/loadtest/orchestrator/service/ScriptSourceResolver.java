@@ -1,8 +1,8 @@
 package com.loadtest.orchestrator.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.loadtest.orchestrator.persistence.BuildRecordEntity;
 import com.loadtest.orchestrator.persistence.BuildRecordRepository;
 import com.loadtest.orchestrator.persistence.ScriptEntity;
@@ -83,7 +83,8 @@ public class ScriptSourceResolver {
         }
         return build.map(BuildRecordEntity::getEngine)
                 .filter(e -> e != null && !e.isBlank())
-                .orElseThrow(() -> new IllegalArgumentException("Укажите движок (jmeter/k6) или сборку/скрипт"));
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Укажите движок (jmeter/k6/gatling) или сборку/скрипт"));
     }
 
     private static String resolveScenarioName(
@@ -113,7 +114,7 @@ public class ScriptSourceResolver {
                     scenarioJson == null || scenarioJson.isBlank() ? "{}" : scenarioJson);
             String base = scenario.path("base_url").asText("");
             return base.isBlank() ? Optional.empty() : Optional.of(base);
-        } catch (JsonProcessingException ex) {
+        } catch (JacksonException ex) {
             log.warn("Cannot parse scenario JSON for base_url: {}", ex.getMessage());
             return Optional.empty();
         }

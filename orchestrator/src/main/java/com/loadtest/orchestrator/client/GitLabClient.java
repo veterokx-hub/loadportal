@@ -1,7 +1,7 @@
 package com.loadtest.orchestrator.client;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -13,11 +13,9 @@ import org.springframework.web.client.RestClient;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Клиент GitLab API: проект, заливка файла, trigger pipeline. */
+/** Клиент GitLab API: проверка проекта и trigger pipeline. Скрипты в GitLab не пишутся. */
 @Component
 public class GitLabClient {
 
@@ -47,55 +45,39 @@ public class GitLabClient {
         });
     }
 
-    /** Создаёт или обновляет файл в ветке {@link #DEFAULT_REF}. */
-    public void upsertFile(
-            String baseUrl,
-            String privateToken,
-            String projectIdOrPath,
-            String filePath,
-            byte[] content,
-            String commitMessage) {
-        if (content == null || content.length == 0) {
-            throw new IllegalArgumentException("Пустое содержимое скрипта");
-        }
-        String fileUrl = projectApiBase(baseUrl, projectIdOrPath)
-                + "/repository/files/"
-                + urlEncodePath(filePath);
-        boolean exists = fileExists(fileUrl, privateToken);
+    /** GET /api/v4/version — жив ли GitLab, без токена. */
+    public String version(String baseUrl) {
+        String url = normalizeBase(baseUrl) + "/api/v4/version";
+        return execute("версию GitLab", () -> readJson(restClient.get()
+                .uri(url)
+                .retrieve()
+                .body(String.class)).path("version").asText(""));
+    }
 
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("branch", DEFAULT_REF);
-        payload.put("content", Base64.getEncoder().encodeToString(content));
-        payload.put("encoding", "base64");
-        payload.put("commit_message",
-                (commitMessage == null || commitMessage.isBlank())
-                        ? "portal: upload " + filePath
-                        : commitMessage);
-
-        String action = exists ? "обновлении файла" : "создании файла";
-        execute(action, () -> {
-            var spec = exists
-                    ? restClient.put().uri(fileUrl)
-                    : restClient.post().uri(fileUrl);
-            spec.header("PRIVATE-TOKEN", privateToken)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(payload)
+    /** POST /pipelines/:id/cancel. Нужен personal/project access token, trigger token сюда не подходит. */
+    public void cancelPipeline(String baseUrl, String projectIdOrPath, String apiToken, long pipelineId) {
+        String url = projectApiBase(baseUrl, projectIdOrPath) + "/pipelines/" + pipelineId + "/cancel";
+        execute("отмену pipeline", () -> {
+            restClient.post()
+                    .uri(url)
+                    .header("PRIVATE-TOKEN", apiToken)
                     .retrieve()
                     .toBodilessEntity();
             return null;
         });
     }
 
-    /** Trigger Pipeline API (form-urlencoded), ref = {@link #DEFAULT_REF}. */
+    /** Trigger Pipeline API (form-urlencoded). */
     public TriggerResult triggerPipeline(
             String baseUrl,
             String projectIdOrPath,
             String triggerToken,
+            String ref,
             Map<String, String> variables) {
         String url = projectApiBase(baseUrl, projectIdOrPath) + "/trigger/pipeline";
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("token", triggerToken);
-        form.add("ref", DEFAULT_REF);
+        form.add("ref", (ref == null || ref.isBlank()) ? DEFAULT_REF : ref.trim());
         if (variables != null) {
             variables.entrySet().stream()
                     .filter(e -> e.getKey() != null && !e.getKey().isBlank())
@@ -115,23 +97,6 @@ public class GitLabClient {
                     node.path("web_url").asText(""),
                     node.path("status").asText("pending"));
         });
-    }
-
-    private boolean fileExists(String fileUrl, String privateToken) {
-        String url = fileUrl + "?ref=" + URLEncoder.encode(DEFAULT_REF, StandardCharsets.UTF_8);
-        try {
-            restClient.get()
-                    .uri(url)
-                    .header("PRIVATE-TOKEN", privateToken)
-                    .retrieve()
-                    .toBodilessEntity();
-            return true;
-        } catch (HttpStatusCodeException ex) {
-            if (ex.getStatusCode().value() == 404) {
-                return false;
-            }
-            throw mapHttpError(ex, "проверке файла");
-        }
     }
 
     private JsonNode readJson(String body) throws Exception {
@@ -166,10 +131,6 @@ public class GitLabClient {
             return projectIdOrPath;
         }
         return URLEncoder.encode(projectIdOrPath, StandardCharsets.UTF_8);
-    }
-
-    private static String urlEncodePath(String filePath) {
-        return URLEncoder.encode(filePath, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private static String normalizeBase(String baseUrl) {

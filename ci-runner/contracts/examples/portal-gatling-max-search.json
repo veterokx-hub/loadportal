@@ -1,0 +1,37 @@
+{
+  "contract_version": 1,
+  "run": {
+    "tool": "gatling",
+    "trigger": "portal",
+    "profile": "max-search",
+    "portal_run_id": "b7e41d09-5f6a-4a8b-91c2-3d4e5f60718a",
+    "jira": "NT-2077",
+    "name": "Поиск максимума · карточный шлюз"
+  },
+  "scenario": {
+    "source": "portal",
+    "path": "scenarios/NT-2077/b7e41d09/portal-gatling.zip",
+    "entrypoint": "portal.PortalSimulation"
+  },
+  "target": {
+    "repository": "lt-cards",
+    "base_url": "https://cards.test.corp.local",
+    "environment": "test"
+  },
+  "resources": {
+    "cpu": "8",
+    "memory": "12Gi",
+    "replicas": 1
+  },
+  "schedule": {
+    "start": "2026-09-12 22:00:00",
+    "end": "2026-09-13 01:00:00"
+  },
+  "sla": {
+    "error_rate_pct": 5.0,
+    "p99_ms": 2000
+  },
+  "meta": {
+    "requested_by": "nvkhakimov"
+  }
+}

@@ -40,6 +40,23 @@ public class TestRunEntity {
     @Column(name = "target_url", length = 2048)
     private String targetUrl = "";
 
+    /**
+     * Идентификация тестируемого сервиса в кластере. Без неё модуль «Анализ» не может
+     * построить ни одного запроса в VictoriaMetrics: URL стенда ничего не говорит
+     * о том, какие поды и контейнеры за ним стоят.
+     */
+    @Column(name = "target_cluster", length = 128)
+    private String targetCluster = "";
+
+    @Column(name = "target_namespace", length = 128)
+    private String targetNamespace = "";
+
+    @Column(name = "target_service", length = 191)
+    private String targetService = "";
+
+    @Column(name = "target_container", length = 128)
+    private String targetContainer = "";
+
     @Column(name = "params_json", columnDefinition = "text")
     private String paramsJson = "{}";
 
@@ -67,6 +84,13 @@ public class TestRunEntity {
 
     @Column(name = "error_message", length = 2048)
     private String errorMessage = "";
+
+    /** passed / failed / invalid из results/verdict.json. Пусто, пока publish не дошёл. */
+    @Column(name = "verdict_status", length = 16)
+    private String verdictStatus = "";
+
+    @Column(name = "verdict_json", columnDefinition = "text")
+    private String verdictJson = "";
 
     @Column(name = "events_json", columnDefinition = "text")
     private String eventsJson = "[]";
@@ -138,6 +162,29 @@ public class TestRunEntity {
         return targetUrl;
     }
 
+    public String getTargetCluster() {
+        return targetCluster;
+    }
+
+    public String getTargetNamespace() {
+        return targetNamespace;
+    }
+
+    public String getTargetService() {
+        return targetService;
+    }
+
+    public String getTargetContainer() {
+        return targetContainer;
+    }
+
+    public void setTarget(String cluster, String namespace, String service, String container) {
+        this.targetCluster = cluster == null ? "" : cluster.trim();
+        this.targetNamespace = namespace == null ? "" : namespace.trim();
+        this.targetService = service == null ? "" : service.trim();
+        this.targetContainer = container == null ? "" : container.trim();
+    }
+
     public String getParamsJson() {
         return paramsJson;
     }
@@ -204,6 +251,22 @@ public class TestRunEntity {
 
     public void setErrorMessage(String errorMessage) {
         this.errorMessage = errorMessage;
+    }
+
+    public String getVerdictStatus() {
+        return verdictStatus;
+    }
+
+    public void setVerdictStatus(String verdictStatus) {
+        this.verdictStatus = verdictStatus;
+    }
+
+    public String getVerdictJson() {
+        return verdictJson;
+    }
+
+    public void setVerdictJson(String verdictJson) {
+        this.verdictJson = verdictJson;
     }
 
     public String getEventsJson() {

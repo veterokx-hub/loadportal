@@ -5,7 +5,9 @@ import type { BuildHistoryItem } from "@/lib/api";
 import { deleteBuild, listBuilds, loadBuildScenario } from "@/lib/api";
 import type { Scenario } from "@/lib/types";
 import { getUsername } from "@/lib/auth";
+import { usePortal } from "@/context/PortalContext";
 import { SaveScenarioDialog } from "@/components/SaveScenarioDialog";
+import type { Engine } from "@/lib/engines";
 
 export function BuildHistory({
   onRestore,
@@ -17,7 +19,7 @@ export function BuildHistory({
   refreshKey?: number;
   /** Текущий сценарий — если в нём есть запросы, перед подтягиванием предложим сохранить сборку. */
   currentScenario?: Scenario | null;
-  defaultEngine?: "jmeter" | "k6";
+  defaultEngine?: Engine;
 }) {
   const [items, setItems] = useState<BuildHistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -25,6 +27,7 @@ export function BuildHistory({
   const [restoring, setRestoring] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [pendingRestoreId, setPendingRestoreId] = useState<string | null>(null);
+  const { isDirty, markScenarioSaved } = usePortal();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -56,8 +59,8 @@ export function BuildHistory({
   }
 
   function restore(id: string) {
-    // Текущая работа будет заменена — предложим сохранить сборку.
-    if (currentScenario && currentScenario.requests.length > 0) {
+    // Предлагаем сохранить только если текущая сборка реально менялась.
+    if (currentScenario && currentScenario.requests.length > 0 && isDirty) {
       setPendingRestoreId(id);
       return;
     }
@@ -92,7 +95,10 @@ export function BuildHistory({
           onDone={(saved) => {
             const id = pendingRestoreId;
             setPendingRestoreId(null);
-            if (saved) load();
+            if (saved) {
+              markScenarioSaved();
+              load();
+            }
             if (id) doRestore(id);
           }}
         />

@@ -19,14 +19,19 @@ export function bracesIn(text: string): string[] {
   return out;
 }
 
+/** Все {name} из path и собственного URL. */
+export function bracesInAddress(req: Pick<RequestModel, "path" | "url">): string[] {
+  const out: string[] = [];
+  for (const n of [...bracesIn(req.path ?? ""), ...bracesIn(req.url ?? "")]) {
+    if (!out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
 /** Шаблон адреса запроса: собственный URL, если задан, иначе path. */
 export function urlTemplate(req: Pick<RequestModel, "path" | "url">): string {
   const u = (req.url ?? "").trim();
   return u !== "" ? u : (req.path ?? "");
-}
-
-function pathTemplateHas(req: RequestModel, name: string): boolean {
-  return urlTemplate(req).includes(`{${name}}`);
 }
 
 /**
@@ -44,6 +49,7 @@ export function paramsFromTemplates(
     if (!braceLoc.has(n)) braceLoc.set(n, "body");
   });
   const braceNames = new Set(braceLoc.keys());
+  const bodyNames = new Set(bracesIn(body));
 
   const fromBraces: Param[] = Array.from(braceLoc.entries()).map(([name, location]) => {
     const prev = existing.find((p) => p.name === name);
@@ -61,6 +67,8 @@ export function paramsFromTemplates(
   const kept = existing.filter((p) => {
     if (braceNames.has(p.name)) return false;
     if (p.location === "path") return false;
+    // авто-параметры Body из {…}: не копить p/pa/par при наборе {param}
+    if (p.location === "body" && p.required && !bodyNames.has(p.name)) return false;
     return true;
   });
 
@@ -68,14 +76,11 @@ export function paramsFromTemplates(
 }
 
 /**
- * Синхронизирует path-параметры с шаблоном URL ({id}).
- * Добавляет недостающие; path без {name} в URL → query.
- * Header / query / body не трогает (кроме совпадения имени с path).
+ * Синхронизирует path-параметры с шаблоном URL ({id}): добавляет недостающие.
  */
 function ensurePathParams(req: RequestModel): RequestModel {
-  const pathNames = bracesIn(urlTemplate(req));
-  const pathSet = new Set(pathNames);
-  let params = [...req.params];
+  const pathNames = bracesInAddress(req);
+  const params = [...req.params];
 
   for (const name of pathNames) {
     const pathIdx = params.findIndex((p) => p.location === "path" && p.name === name);
@@ -93,13 +98,6 @@ function ensurePathParams(req: RequestModel): RequestModel {
     }
   }
 
-  params = params.map((p) => {
-    if (p.location === "path" && !pathSet.has(p.name)) {
-      return { ...p, location: "query" as ParamLocation };
-    }
-    return p;
-  });
-
   return { ...req, params };
 }
 
@@ -109,7 +107,7 @@ export function uiParams(req: RequestModel): Param[] {
     if (p.location === "header" || p.location === "query" || p.location === "body") {
       return true;
     }
-    if (p.location === "path" && pathTemplateHas(req, p.name)) {
+    if (p.location === "path") {
       return true;
     }
     return false;

@@ -42,17 +42,16 @@ public class HealthController {
         boolean jmeterOk = ping(resolved.jmeterBuilderUrl() + "/health");
         boolean analyzerOk = ping(resolved.analyzerUrl() + "/health");
         boolean k6Ok = ping(resolved.k6GeneratorUrl() + "/health");
-        deps.put("jmeter_builder", Map.of("url", resolved.jmeterBuilderUrl(), "ok", jmeterOk));
-        deps.put("analyzer", Map.of("url", resolved.analyzerUrl(), "ok", analyzerOk));
-        deps.put("k6_generator", Map.of("url", resolved.k6GeneratorUrl(), "ok", k6Ok));
-        deps.put("frontend_api_base_url", resolved.frontendApiBaseUrl().isBlank()
-                ? "(same-origin /api)" : resolved.frontendApiBaseUrl());
+        boolean gatlingOk = ping(resolved.gatlingGeneratorUrl() + "/health");
+        deps.put("jmeter_builder", jmeterOk);
+        deps.put("analyzer", analyzerOk);
+        deps.put("k6_generator", k6Ok);
+        deps.put("gatling_generator", gatlingOk);
         deps.put("consul_enabled", resolved.consulEnabled());
         deps.put("consul_reachable", resolved.consulReachable());
         deps.put("vault_enabled", resolved.vaultEnabled());
-        deps.put("vault_address", resolved.vaultAddress());
 
-        boolean all = jmeterOk && analyzerOk && k6Ok;
+        boolean all = jmeterOk && analyzerOk && k6Ok && gatlingOk;
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("status", all ? "ok" : "degraded");
         body.put("dependencies", deps);

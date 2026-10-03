@@ -1,8 +1,8 @@
 package com.loadtest.orchestrator.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -37,7 +37,7 @@ public class JsonSupport {
     public String write(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
-        } catch (JsonProcessingException ex) {
+        } catch (JacksonException ex) {
             log.debug("JSON write failed: {}", ex.getMessage());
             return "{}";
         }
@@ -53,7 +53,7 @@ public class JsonSupport {
         }
         try {
             return objectMapper.readValue(json, type);
-        } catch (JsonProcessingException ex) {
+        } catch (JacksonException ex) {
             log.debug("JSON parse failed: {}", ex.getMessage());
             return fallback;
         }

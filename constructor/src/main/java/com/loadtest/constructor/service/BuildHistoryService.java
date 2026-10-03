@@ -1,7 +1,7 @@
 package com.loadtest.constructor.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import com.loadtest.constructor.model.Scenario;
 import com.loadtest.constructor.persistence.BuildRecordEntity;
 import com.loadtest.constructor.persistence.BuildRecordRepository;
@@ -127,7 +127,7 @@ public class BuildHistoryService {
     private String toJson(Scenario scenario) {
         try {
             return objectMapper.writeValueAsString(scenario);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Не удалось сериализовать сценарий", e);
         }
     }
@@ -135,7 +135,7 @@ public class BuildHistoryService {
     private Scenario fromJson(String json) {
         try {
             return objectMapper.readValue(json, Scenario.class);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("Не удалось десериализовать сценарий", e);
         }
     }

@@ -57,14 +57,9 @@ export const APP_MODULES: AppModule[] = [
     id: "analysis",
     nav: "Анализ",
     title: "Анализ результатов",
-    blurb: "Метрики прогона, аномалии и рекомендации",
-    available: false,
-    preview: [
-      "RPS, latency (p95/p99), ошибки из Prometheus",
-      "Сравнение с эталоном release N−1",
-      "Связка readiness score сценария с фактом прогона",
-      "Рекомендации по узким местам",
-    ],
+    blurb: "Аномалии в метриках сервиса → гипотеза о причине в коде",
+    available: true,
+    preview: [],
   },
   {
     id: "report",

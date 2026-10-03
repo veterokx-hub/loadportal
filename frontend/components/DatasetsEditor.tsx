@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { Dataset } from "@/lib/types";
+import { FileUploadButton } from "@/components/FileUploadButton";
 
 const MAX_ROWS = 2000;
 
@@ -68,18 +69,15 @@ export function DatasetsEditor({
     patch(d.id, { columns: columns.length ? columns : d.columns, rows });
   }
 
-  async function upload(d: Dataset, file: File, input: HTMLInputElement) {
+  async function upload(d: Dataset, file: File) {
     const text = await file.text();
     const { columns, rows } = parse(text);
     setTexts((t) => ({ ...t, [d.id]: text }));
-    // Один patch: иначе второй вызов затрёт columns/rows устаревшим datasets.
     patch(d.id, {
       columns: columns.length ? columns : d.columns,
       rows,
       file_name: file.name?.trim() || d.file_name || slug(d.name),
     });
-    // Сброс input — иначе браузер не шлёт change при повторном выборе того же файла.
-    input.value = "";
   }
 
   return (
@@ -112,15 +110,8 @@ export function DatasetsEditor({
                 <input value={d.file_name} onChange={(e) => patch(d.id, { file_name: e.target.value })} />
               </div>
               <div className="field" style={{ flex: 1 }}>
-                <label>Загрузить CSV</label>
-                <input
-                  type="file"
-                  accept=".csv,text/csv,text/plain"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) void upload(d, file, e.target);
-                  }}
-                />
+                <label>CSV</label>
+                <FileUploadButton accept=".csv,text/csv,text/plain" onPick={(file) => void upload(d, file)} />
               </div>
               <div className="field" style={{ flex: "none", width: 200 }}>
                 <label>Выбор строк</label>

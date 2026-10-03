@@ -14,7 +14,7 @@ export const MODULE_PATH: Record<AppModuleId, string> = {
   scenario: "/scenario/source",
   environment: "/environment",
   run: "/run/new",
-  analysis: "/analysis",
+  analysis: "/analysis/new",
   report: "/report",
 };
 
@@ -39,6 +39,19 @@ export function runDetailPath(runId: string): string {
 export const RUN_TABS = [
   { id: "new" as const, label: "Новый запуск", href: "/run/new", num: 1 },
   { id: "list" as const, label: "Прогоны", href: "/run/list", num: 2 },
+];
+
+export function analysisDetailPath(id: string): string {
+  return `/analysis/${encodeURIComponent(id)}`;
+}
+
+export function analysisNewPath(runId?: string | null): string {
+  return runId ? `/analysis/new?run=${encodeURIComponent(runId)}` : "/analysis/new";
+}
+
+export const ANALYSIS_TABS = [
+  { id: "new" as const, label: "Что анализируем", href: "/analysis/new", num: 1 },
+  { id: "list" as const, label: "Отчёты", href: "/analysis/list", num: 2 },
 ];
 
 export function moduleIdFromPath(pathname: string): AppModuleId {

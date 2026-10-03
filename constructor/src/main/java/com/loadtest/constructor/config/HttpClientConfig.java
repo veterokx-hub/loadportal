@@ -44,6 +44,20 @@ public class HttpClientConfig {
                 .build();
     }
 
+    /** Клиент к analyzer/генераторам: тот же пул, плюс X-Internal-Token. */
+    @Bean
+    public RestClient internalRestClient(
+            RestClient.Builder builder,
+            @Value("${loadtest.http.connect-timeout-ms:5000}") long connectTimeoutMs,
+            @Value("${loadtest.http.read-timeout-ms:60000}") long readTimeoutMs,
+            @Value("${loadtest.internal-token:}") String internalToken) {
+        var spec = builder.clone().requestFactory(requestFactory(connectTimeoutMs, readTimeoutMs));
+        if (internalToken != null && !internalToken.isBlank()) {
+            spec = spec.defaultHeader("X-Internal-Token", internalToken);
+        }
+        return spec.build();
+    }
+
     /**
      * Клиент для health-проб соседних модулей в {@code /ready}: недоступный сосед должен
      * определяться за секунды, а не блокировать probe до общего read-таймаута.

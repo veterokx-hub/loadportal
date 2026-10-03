@@ -13,6 +13,8 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.security.SecureRandom;
+
 @Configuration
 public class DataInitializer {
 
@@ -33,8 +35,11 @@ public class DataInitializer {
             String adminName = bootstrapUsername == null || bootstrapUsername.isBlank()
                     ? "admin" : bootstrapUsername.trim();
             if (users.findByUsernameIgnoreCase(adminName).isEmpty()) {
-                String pwd = bootstrapPassword == null || bootstrapPassword.isBlank()
-                        ? "admin" : bootstrapPassword;
+                String pwd = bootstrapPassword;
+                if (pwd == null || pwd.isBlank() || "admin".equals(pwd)) {
+                    pwd = randomPassword();
+                    log.warn("Сгенерирован пароль bootstrap-админа для '{}': {}", adminName, pwd);
+                }
                 String hash = authService.passwordEncoder().encode(pwd);
                 UserEntity admin = new UserEntity(adminName, hash, UserRole.ADMIN, false);
                 admin.setMustChangePassword(true);
@@ -52,5 +57,15 @@ public class DataInitializer {
                 });
             }
         };
+    }
+
+    private static String randomPassword() {
+        final String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+        SecureRandom rnd = new SecureRandom();
+        StringBuilder sb = new StringBuilder(20);
+        for (int i = 0; i < 20; i++) {
+            sb.append(alphabet.charAt(rnd.nextInt(alphabet.length())));
+        }
+        return sb.toString();
     }
 }

@@ -1,6 +1,6 @@
 package com.loadtest.constructor.client;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.loadtest.constructor.model.Scenario;
 import com.loadtest.constructor.service.ModuleEndpoints;
 import com.loadtest.constructor.web.dto.AnalyzeRequest;
@@ -28,7 +28,7 @@ public class AnalyzerClient {
     public AnalyzerClient(
             ModuleEndpoints endpoints,
             ObjectMapper objectMapper,
-            @Qualifier("sharedRestClient") RestClient restClient) {
+            @Qualifier("internalRestClient") RestClient restClient) {
         this.endpoints = endpoints;
         this.objectMapper = objectMapper;
         this.restClient = restClient;

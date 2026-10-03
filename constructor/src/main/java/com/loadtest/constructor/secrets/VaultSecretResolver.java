@@ -1,7 +1,8 @@
 package com.loadtest.constructor.secrets;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.loadtest.constructor.config.DiscoveryConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,7 +11,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
 
@@ -55,10 +55,12 @@ public class VaultSecretResolver implements SecretResolver {
         String url = address.replaceAll("/$", "") + "/v1/" + kvMount.replaceAll("^/|/$", "")
                 + "/data/" + normalizedPath;
         try {
-            String body = restClient.get()
-                    .uri(url)
-                    .retrieve()
-                    .body(String.class);
+            var request = restClient.get().uri(url);
+            String token = System.getenv("VAULT_TOKEN");
+            if (token != null && !token.isBlank()) {
+                request = request.header("X-Vault-Token", token.trim());
+            }
+            String body = request.retrieve().body(String.class);
             if (body == null || body.isBlank()) {
                 return Optional.empty();
             }
@@ -67,14 +69,18 @@ public class VaultSecretResolver implements SecretResolver {
             if (data.isMissingNode() || !data.isObject()) {
                 return Optional.empty();
             }
-            Iterator<Map.Entry<String, JsonNode>> fields = data.fields();
-            if (!fields.hasNext()) {
+            JsonNode named = data.get("value");
+            if (named != null && !named.asString("").isBlank()) {
+                return Optional.of(named.asString().trim());
+            }
+            var props = data.properties();
+            if (props.isEmpty()) {
                 return Optional.empty();
             }
-            Map.Entry<String, JsonNode> first = fields.next();
-            String value = first.getValue().asText("");
+            Map.Entry<String, JsonNode> first = props.iterator().next();
+            String value = first.getValue().asString("");
             return value.isBlank() ? Optional.empty() : Optional.of(value.trim());
-        } catch (RestClientException | java.io.IOException ex) {
+        } catch (RestClientException | JacksonException ex) {
             log.warn("Vault resolve failed for path {}: {}", vaultPath, ex.getMessage());
             return Optional.empty();
         }

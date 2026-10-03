@@ -18,14 +18,12 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
     open-in-view: false
   liquibase:
     enabled: true
     change-log: classpath:db/changelog/db.changelog-master.yaml
   jackson:
+    use-jackson2-defaults: true
     property-naming-strategy: SNAKE_CASE
     default-property-inclusion: non_null
     mapper:
@@ -36,6 +34,10 @@ spring:
 # (вместо стандартного /actuator/prometheus). Наружу открыт только этот эндпоинт:
 # health/ready отдают собственные контроллеры, остальные actuator-эндпоинты закрыты.
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: false
   endpoints:
     web:
       base-path: /
@@ -64,6 +66,9 @@ k6-generator:
 jmeter-builder:
   base-url: ${JMETER_BUILDER_BASE_URL:http://localhost:8081}
 
+gatling-generator:
+  base-url: ${GATLING_GENERATOR_BASE_URL:http://localhost:8002}
+
 loadtest:
   # Таймауты общего HTTP-клиента (см. config/HttpClientConfig).
   http:
@@ -73,9 +78,24 @@ loadtest:
     # Пробы соседей в /ready: быстрый отказ вместо ожидания.
     probe-connect-timeout-ms: 2000
     probe-read-timeout-ms: 2000
+  # Общий секрет constructor ↔ analyzer/генераторы. Пусто = не проверять (только локальный bootRun).
+  internal-token: ${LOADTEST_INTERNAL_TOKEN:}
+  cors:
+    # Только Origin из адресной строки браузера. Не k8s Service, не «*».
+    allowed-origins: ${LOADTEST_CORS_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
+  # Несекреты AD. Пусто = не перекрывать Consul и portal_settings.
+  # Пароль bind — Vault loadtest/ad/bind-password или LDAP_BIND_PASSWORD.
+  ad:
+    enabled: ${LDAP_ENABLED:}
+    url: ${LDAP_URL:}
+    base-dn: ${LDAP_BASE_DN:}
+    user-dn-pattern: ${LDAP_USER_DN_PATTERN:}
+    user-search-base: ${LDAP_USER_SEARCH_BASE:}
+    user-search-filter: ${LDAP_USER_SEARCH_FILTER:}
+    bind-dn: ${LDAP_BIND_DN:}
   bootstrap:
     admin-username: ${LOADTEST_BOOTSTRAP_ADMIN_USERNAME:admin}
-    admin-password: ${LOADTEST_BOOTSTRAP_ADMIN_PASSWORD:admin}
+    admin-password: ${LOADTEST_BOOTSTRAP_ADMIN_PASSWORD:}
   # Argo Job: --loadtest.db-init-exit=true --spring.main.web-application-type=none
   db-init-exit: false
   builds:

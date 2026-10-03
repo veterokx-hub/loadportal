@@ -10,5 +10,17 @@ public record Generator(
         Integer length,
         String chars,
         Integer start,
-        String format
-) {}
+        String format,
+        Integer increment
+) {
+    public Generator(
+            GeneratorType type,
+            Integer min,
+            Integer max,
+            Integer length,
+            String chars,
+            Integer start,
+            String format) {
+        this(type, min, max, length, chars, start, format, null);
+    }
+}

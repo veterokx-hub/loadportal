@@ -1,0 +1,228 @@
+# Гипотезы: от симптома в метриках к предположению о причине в коде.
+#
+# Это не диагноз. Модуль не видит код и не знает, что вы задеплоили. Он умеет
+# сказать: «такая комбинация метрик обычно означает вот это — проверьте здесь».
+#
+# Срабатывание: все условия requires должны найтись среди находок, ни одно из
+# absent — не найтись. Условие матчится по (metric, detector, direction).
+# detector: level | drift | invariant | event | any
+# direction: up | down | any
+
+patterns:
+  - id: jvm_heap_leak
+    title: Похоже на утечку памяти в JVM
+    severity: critical
+    base_confidence: 55
+    requires:
+      - { metric: jvm.gc.live_data, detector: drift, direction: up, weight: 25 }
+    boosts:
+      - { metric: jvm.gc.pause_share, detector: any, direction: up, weight: 10 }
+      - { metric: derived.mem_saturation, detector: any, direction: up, weight: 10 }
+      - { metric: http.rt.p99, detector: any, direction: up, weight: 5 }
+    body: >
+      Объём живых объектов после сборки мусора растёт монотонно, хотя нагрузка стабильна.
+      Так выглядит удержание ссылок: GC отрабатывает, но освободить память не может.
+      Пилообразный heap при этом нормален — важно, что нижняя граница пилы ползёт вверх.
+    checks:
+      - "Статические коллекции и кэши без ограничения размера и TTL: Map/List в static-полях, @Cacheable без maximumSize."
+      - "ThreadLocal без remove() в пулах потоков — значение живёт столько же, сколько поток."
+      - "Незакрытые ресурсы: InputStream, Connection, HttpClient вне try-with-resources."
+      - "Слушатели и подписки, которые регистрируются на каждый запрос и не снимаются."
+      - "Снимите heap dump в начале и в конце плато и сравните гистограммы: класс с растущим числом инстансов и есть ответ."
+
+  - id: go_goroutine_leak
+    title: Похоже на утечку горутин
+    severity: critical
+    base_confidence: 55
+    requires:
+      - { metric: go.goroutines, detector: drift, direction: up, weight: 25 }
+    boosts:
+      - { metric: go.heap.inuse, detector: drift, direction: up, weight: 12 }
+      - { metric: derived.mem_saturation, detector: any, direction: up, weight: 8 }
+    body: >
+      Число горутин растёт монотонно при стабильной нагрузке. Значит, часть горутин,
+      запущенных на обработку запроса, не завершается — они ждут на канале или на сетевом вызове,
+      у которого нет таймаута.
+    checks:
+      - "Вызовы без context с дедлайном: http.Client без Timeout, запросы к БД без context."
+      - "Отправка в небуферизованный канал, который никто не читает после ошибки."
+      - "defer close/cancel, потерянный на раннем return."
+      - "time.After в select внутри цикла — таймер живёт до срабатывания и держит память."
+      - "Снимите pprof goroutine на пике: одинаковый стек у тысяч горутин указывает на место."
+
+  - id: db_pool_starvation
+    title: Узкое место — пул соединений к БД
+    severity: critical
+    base_confidence: 60
+    requires:
+      - { metric: db.pool.pending, detector: invariant, direction: up, weight: 20 }
+    boosts:
+      - { metric: http.rt.p99, detector: any, direction: up, weight: 10 }
+      - { metric: derived.tail_ratio, detector: any, direction: up, weight: 10 }
+      - { metric: derived.thread_saturation, detector: any, direction: up, weight: 5 }
+    body: >
+      Потоки стоят в очереди за соединением. Время ответа растёт не потому, что медленная база,
+      а потому, что до базы очередь. Характерный признак — медиана держится, а хвост уезжает.
+    checks:
+      - "Длительность транзакций: @Transactional на методе, внутри которого есть внешний HTTP-вызов, держит соединение всё это время."
+      - "Соединение, взятое до начала работы и отпущенное после — вынесите получение ближе к запросу."
+      - "Размер пула против числа потоков обработчика: пул меньше — очередь неизбежна."
+      - "N+1 запросы: один HTTP-запрос, который делает 50 обращений к БД, занимает соединение в 50 раз дольше."
+
+  - id: slow_query_regression
+    title: Запросы к базе стали медленнее
+    severity: major
+    base_confidence: 35
+    requires:
+      - { metric: db.query.p99, detector: any, direction: up, weight: 25 }
+    boosts:
+      - { metric: derived.pool_saturation, detector: any, direction: up, weight: 10 }
+      - { metric: http.rt.p99, detector: any, direction: up, weight: 10 }
+    absent:
+      # Если за пулом стоит очередь, главная история — пул, а не скорость запроса:
+      # обе гипотезы одновременно только запутают.
+      - { metric: db.pool.pending, detector: any }
+      - { metric: derived.cpu_saturation, detector: invariant }
+    body: >
+      Время запроса к БД выросло, а CPU приложения при этом не упирается. Проблема ниже
+      приложения — в самой базе или в объёме данных, который вырос за время теста.
+    checks:
+      - "План запроса на объёме данных теста: seq scan вместо index scan появляется, когда таблица выросла."
+      - "Блокировки и ожидания: pg_stat_activity с wait_event во время теста."
+      - "Автовакуум не успевает за скоростью вставок — таблица распухает по ходу теста."
+      - "Данные теста не чистятся между прогонами: к 8-му часу таблица в разы больше, чем в начале."
+
+  - id: cpu_throttling
+    title: Контейнер троттлится ядром
+    severity: major
+    base_confidence: 65
+    requires:
+      - { metric: cpu.throttled, detector: invariant, direction: up, weight: 20 }
+    boosts:
+      - { metric: http.rt.p99, detector: any, direction: up, weight: 10 }
+      - { metric: derived.tail_ratio, detector: any, direction: up, weight: 10 }
+    body: >
+      Задержка растёт рывками, потому что cgroup отбирает процессор в конце каждого периода.
+      Средняя утилизация при этом может выглядеть скромно — троттлинг проявляется в хвосте.
+    checks:
+      - "cpu.limit против реального потребления: лимит в 1 ядро для приложения с пулом на 200 потоков даёт постоянный троттлинг."
+      - "Число GC-потоков и ForkJoin-пулов: JVM до 10-й версии не видит cgroup-лимит и заводит потоки по числу ядер хоста."
+      - "Уберите limit (оставив requests) и повторите тест — если хвост выпрямился, причина найдена."
+
+  - id: cpu_bound
+    title: Упёрлись в процессор
+    severity: major
+    base_confidence: 55
+    requires:
+      - { metric: derived.cpu_saturation, detector: invariant, direction: up, weight: 20 }
+    boosts:
+      - { metric: http.rt.p99, detector: any, direction: up, weight: 10 }
+      - { metric: derived.cpu_per_rps, detector: drift, direction: up, weight: 15 }
+    absent:
+      - { metric: db.pool.pending, detector: invariant }
+    body: >
+      Процессор загружен под лимит, остальные ресурсы свободны. Это честный потолок
+      вертикального масштабирования: дальше либо оптимизация кода, либо больше реплик.
+    checks:
+      - "Профиль CPU под нагрузкой (async-profiler / pprof) — обычно 2–3 метода дают половину времени."
+      - "Сериализация JSON и логирование на каждый запрос — типовые пожиратели на горячем пути."
+      - "Регулярные выражения, компилируемые внутри метода вместо статического поля."
+      - "Если рост CPU на единицу RPS есть, а объёма работы не добавилось — ищите деградацию алгоритма на выросших данных."
+
+  - id: blocking_io_starvation
+    title: Обработчики заняты ожиданием, а не работой
+    severity: major
+    base_confidence: 55
+    requires:
+      - { metric: derived.thread_saturation, detector: invariant, direction: up, weight: 20 }
+    boosts:
+      - { metric: derived.tail_ratio, detector: any, direction: up, weight: 12 }
+      - { metric: http.rt.p99, detector: any, direction: up, weight: 8 }
+    absent:
+      - { metric: derived.cpu_saturation, detector: invariant }
+    body: >
+      Пул обработчиков занят почти полностью, а процессор простаивает. Потоки не считают,
+      а ждут ответа снаружи. Новые запросы копятся в очереди приёма — отсюда рост хвоста.
+    checks:
+      - "Таймауты на всех исходящих вызовах: вызов без таймаута занимает поток на неопределённое время."
+      - "Синхронные обращения к соседним сервисам внутри обработки запроса — кандидат на асинхронность."
+      - "Thread dump в момент насыщения: одинаковый стек у большинства потоков покажет, чего именно ждут."
+
+  - id: gc_thrashing
+    title: Сборка мусора съедает пропускную способность
+    severity: critical
+    base_confidence: 60
+    requires:
+      - { metric: jvm.gc.pause_share, detector: invariant, direction: up, weight: 20 }
+    boosts:
+      - { metric: jvm.gc.live_data, detector: any, direction: up, weight: 15 }
+      - { metric: http.rt.p99, detector: any, direction: up, weight: 10 }
+    body: >
+      Заметная доля процессорного времени уходит в GC. Приложение упирается не в бизнес-логику,
+      а в скорость аллокаций: либо на запрос создаётся слишком много объектов, либо heap мал
+      для рабочего набора.
+    checks:
+      - "Аллокации на запрос: профиль по памяти покажет, где создаётся мусор пачками."
+      - "Строки и промежуточные коллекции в циклах, боксинг примитивов в hot path."
+      - "Размер heap против объёма живых объектов: если живых 80% от heap, GC работает вхолостую."
+      - "Логирование в DEBUG на горячем пути — конкатенация строк, которые никто не прочитает."
+
+  - id: memory_limit_low
+    title: Лимит памяти мал для этой нагрузки
+    severity: critical
+    base_confidence: 60
+    requires:
+      - { metric: k8s.oom, detector: event, direction: up, weight: 25 }
+    boosts:
+      - { metric: derived.mem_saturation, detector: any, direction: up, weight: 10 }
+    absent:
+      - { metric: jvm.gc.live_data, detector: drift }
+    body: >
+      Процесс убит по памяти, но монотонного роста живых объектов нет. Значит, это не утечка,
+      а несоответствие лимита пиковому потреблению.
+    checks:
+      - "Off-heap: direct buffers, metaspace, стеки потоков и native-память драйверов в лимит контейнера входят, в -Xmx — нет."
+      - "-Xmx против limits.memory: разница меньше 25% почти гарантирует OOMKill под нагрузкой."
+      - "Пиковое потребление на ramp обычно выше, чем на плато — лимит надо ставить по пику."
+
+  - id: cache_degradation
+    title: Кэш перестал спасать
+    severity: major
+    base_confidence: 45
+    requires:
+      - { metric: cache.hit_ratio, detector: any, direction: down, weight: 20 }
+    boosts:
+      - { metric: db.query.p99, detector: any, direction: up, weight: 15 }
+      - { metric: derived.pool_saturation, detector: any, direction: up, weight: 10 }
+    body: >
+      Доля попаданий в кэш упала, и нагрузка ушла в базу. Под нагрузкой рабочий набор
+      перестал помещаться в кэш либо TTL оказался короче интервала обращений.
+    checks:
+      - "Размер кэша против кардинальности ключей в тестовых данных: случайные ключи на каждый запрос делают кэш бесполезным."
+      - "TTL против частоты обращений к одному ключу."
+      - "Тестовые данные: если генератор бьёт по уникальным ключам, кэш не тестируется — это дефект сценария, а не кода."
+
+  - id: downstream_degradation
+    title: Тормозит не сервис, а его окружение
+    severity: major
+    base_confidence: 45
+    requires:
+      - { metric: derived.tail_ratio, detector: any, direction: up, weight: 20 }
+      - { metric: http.rt.p99, detector: any, direction: up, weight: 10 }
+    absent:
+      # Любая находка по своим ресурсам снимает гипотезу: искать причину снаружи
+      # имеет смысл только тогда, когда внутри всё чисто.
+      - { metric: derived.cpu_saturation, detector: any }
+      - { metric: derived.mem_saturation, detector: any }
+      - { metric: derived.thread_saturation, detector: any }
+      - { metric: jvm.gc.pause_share, detector: any }
+      - { metric: go.gc.pause_share, detector: any }
+      - { metric: cpu.throttled, detector: any }
+      - { metric: db.pool.pending, detector: any }
+    body: >
+      Хвост времени ответа растёт, медиана держится, собственные ресурсы сервиса свободны.
+      Так выглядит ожидание внешнего вызова: часть запросов уходит по медленному пути.
+    checks:
+      - "Разложите время ответа по эндпоинтам: обычно деградирует один-два, а не всё сразу."
+      - "Метрики соседних сервисов и БД за то же окно — начните с того, кого вызываете синхронно."
+      - "Ретраи: один ретрай с таймаутом 3 секунды превращает p99 в 6 секунд, не меняя медианы."

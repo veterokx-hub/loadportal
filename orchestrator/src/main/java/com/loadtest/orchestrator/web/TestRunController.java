@@ -34,4 +34,9 @@ public class TestRunController {
     public TestRunDto get(@PathVariable UUID id, HttpServletRequest request) {
         return testRunService.getRun(id, AuthInterceptor.requireAuth(request));
     }
+
+    @PostMapping("/{id}/cancel")
+    public TestRunDto cancel(@PathVariable UUID id, HttpServletRequest request) {
+        return testRunService.cancel(id, AuthInterceptor.requireAuth(request));
+    }
 }

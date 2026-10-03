@@ -236,3 +236,122 @@ databaseChangeLog:
               - column: { name: gitlab_trigger_token, type: varchar(512), defaultValue: "" }
               - column: { name: gitlab_upload_token, type: varchar(512), defaultValue: "" }
               - column: { name: gitlab_webhook_secret, type: varchar(512), defaultValue: "" }
+
+  - changeSet:
+      id: 7-audit-events
+      author: loadtest-portal
+      comment: Admin audit trail — login, build save, script export, run start
+      changes:
+        - createTable:
+            tableName: audit_events
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: created_at, type: timestamptz, constraints: { nullable: false } }
+              - column: { name: username, type: varchar(128), constraints: { nullable: false } }
+              - column: { name: action, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: detail, type: varchar(512), constraints: { nullable: false } }
+        - createIndex:
+            indexName: idx_audit_events_created
+            tableName: audit_events
+            columns:
+              - column: { name: created_at }
+
+  - changeSet:
+      id: 8-auth-sessions-username
+      author: loadtest-portal
+      comment: Lookup/revoke sessions by username
+      changes:
+        - createIndex:
+            indexName: idx_auth_sessions_username
+            tableName: auth_sessions
+            columns:
+              - column: { name: username }
+
+  - changeSet:
+      id: 9-module4-analysis
+      author: loadtest-portal
+      comment: >
+        Module 4 — target identity on runs + analysis reports.
+        Отчёт хранится целиком в JSON: находки читаются документом, а не выборкой,
+        а их структура будет меняться вместе с каталогом правил. Наружу вынесены
+        только поля, по которым строится список и фильтры.
+      changes:
+        - addColumn:
+            tableName: test_runs
+            columns:
+              - column: { name: target_cluster, type: varchar(128), defaultValue: "" }
+              - column: { name: target_namespace, type: varchar(128), defaultValue: "" }
+              - column: { name: target_service, type: varchar(191), defaultValue: "" }
+              - column: { name: target_container, type: varchar(128), defaultValue: "" }
+
+        - createTable:
+            tableName: analysis_runs
+            columns:
+              - column: { name: id, type: uuid, constraints: { primaryKey: true, nullable: false } }
+              - column: { name: username, type: varchar(128), constraints: { nullable: false } }
+              - column: { name: test_run_id, type: uuid }
+              - column: { name: test_id, type: varchar(128), defaultValue: "" }
+              - column: { name: target_cluster, type: varchar(128), defaultValue: "" }
+              - column: { name: target_namespace, type: varchar(128), defaultValue: "" }
+              - column: { name: target_service, type: varchar(191), defaultValue: "" }
+              - column: { name: target_container, type: varchar(128), defaultValue: "" }
+              - column: { name: window_from, type: timestamptz, constraints: { nullable: false } }
+              - column: { name: window_to, type: timestamptz, constraints: { nullable: false } }
+              - column: { name: status, type: varchar(16), constraints: { nullable: false } }
+              - column: { name: verdict, type: varchar(16), defaultValue: "" }
+              - column: { name: health_score, type: int, defaultValueNumeric: 0 }
+              - column: { name: findings_count, type: int, defaultValueNumeric: 0 }
+              - column: { name: headline, type: varchar(1024), defaultValue: "" }
+              - column: { name: ruleset_version, type: varchar(32), defaultValue: "" }
+              - column: { name: demo, type: boolean, defaultValueBoolean: false, constraints: { nullable: false } }
+              - column: { name: report_json, type: text }
+              - column: { name: error_message, type: varchar(2048), defaultValue: "" }
+              - column: { name: created_at, type: timestamptz, constraints: { nullable: false } }
+              - column: { name: finished_at, type: timestamptz }
+
+        - createIndex:
+            indexName: idx_analysis_runs_username
+            tableName: analysis_runs
+            columns:
+              - column: { name: username }
+
+        - createIndex:
+            indexName: idx_analysis_runs_created
+            tableName: analysis_runs
+            columns:
+              - column: { name: created_at }
+
+        - createIndex:
+            indexName: idx_analysis_runs_test_run
+            tableName: analysis_runs
+            columns:
+              - column: { name: test_run_id }
+
+  - changeSet:
+      id: 10-analysis-rerun-inputs
+      author: loadtest-portal
+      comment: >
+        Вход анализа рядом с его результатом. Пересчёт собирался из колонок записи, и всё,
+        чего среди них нет, терялось: тип теста, пороги SLO, профиль демо-дефекта. Отчёты
+        расходились на одном и том же прогоне, хотя сравнивать их — единственный смысл
+        кнопки «Пересчитать». Дефект демо приходит из отчёта: в запросе он может быть
+        пустым, и тогда синтетика выбирает его по хешу.
+      changes:
+        - addColumn:
+            tableName: analysis_runs
+            columns:
+              - column: { name: demo_fault, type: varchar(32), defaultValue: "" }
+              - column: { name: request_json, type: text }
+
+  - changeSet:
+      id: 11-run-verdict
+      author: loadtest-portal
+      comment: >
+        Вердикт gate (passed/failed/invalid) отдельно от статуса пайплайна GitLab.
+        Webhook видит только success/failed и не отличает нарушение SLA от невалидного прогона.
+      changes:
+        - addColumn:
+            tableName: test_runs
+            columns:
+              - column: { name: verdict_status, type: varchar(16), defaultValue: "" }
+              - column: { name: verdict_json, type: text }

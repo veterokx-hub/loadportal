@@ -63,7 +63,7 @@ public class JmxBuilder {
                 appendWithHashTree(doc, testPlanChildren, autoStopListener(doc, autostop));
             }
 
-            appendWithHashTree(doc, testPlanChildren, prometheusBackendListener(doc, scenario));
+            appendWithHashTree(doc, testPlanChildren, influxBackendListener(doc, scenario));
 
             Map<String, Dataset> datasetsById = scenario.datasets().stream()
                     .collect(Collectors.toMap(Dataset::id, d -> d, (a, b) -> a, LinkedHashMap::new));
@@ -82,6 +82,8 @@ public class JmxBuilder {
                                 ds.random() ? randomCsvDataSet(doc, ds) : csvDataSet(doc, ds));
                     }
                 }
+
+                appendCounters(doc, ctgChildren, grp);
 
                 // Throughput Shaping Timer — профиль RPS на всю группу
                 appendWithHashTree(doc, ctgChildren, throughputShapingTimer(doc, grp.intensity(), load));
@@ -266,7 +268,7 @@ public class JmxBuilder {
         Element coll = (Element) args.getElementsByTagName("collectionProp").item(0);
         for (Param qp : queryParams) {
             if (qp.name() == null || qp.name().isBlank()) continue;
-            appendQueryArgument(doc, coll, qp.name(), render(qp.source()));
+            appendQueryArgument(doc, coll, qp.name(), render(qp.source(), qp.name()));
         }
         if (rawBody) {
             appendBodyArgument(doc, coll, effectiveBody(req));
@@ -379,13 +381,20 @@ public class JmxBuilder {
         return e;
     }
 
-    private Element prometheusBackendListener(Document doc, Scenario scenario) {
+    private Element influxBackendListener(Document doc, Scenario scenario) {
         PrometheusConfig p = scenario.prometheus();
         String testName = scenario.name() == null || scenario.name().isBlank() ? "scenario" : scenario.name();
+        String application = p.application().isBlank() ? testName : p.application().trim();
+        String influxUrl = p.influxdbUrl();
+        if (influxUrl.indexOf(',') >= 0 || influxUrl.indexOf('}') >= 0) {
+            throw new JmxBuildException(
+                    "Адрес VictoriaMetrics не должен содержать запятую или }: JMeter обрежет ${__P(influxdb_url,...)}");
+        }
 
         Element e = testElement(doc, "BackendListener", "BackendListenerGui",
-                "BackendListener", "Prometheus (Kolesnikov)");
-        e.appendChild(stringProp(doc, "classname", "com.github.kolesnikovm.PrometheusListener"));
+                "BackendListener", "VictoriaMetrics (Influx)");
+        e.appendChild(stringProp(doc, "classname",
+                "org.apache.jmeter.visualizers.backend.influxdb.InfluxdbBackendListenerClient"));
 
         Element args = doc.createElement("elementProp");
         args.setAttribute("name", "arguments");
@@ -396,11 +405,19 @@ public class JmxBuilder {
         args.setAttribute("enabled", "true");
         Element coll = collectionProp(doc, "Arguments.arguments");
 
-        addBackendArg(doc, coll, "testName", testName);
-        addBackendArg(doc, coll, "runId", p.runId() == null ? "1" : p.runId());
-        addBackendArg(doc, coll, "exporterPort", String.valueOf(p.exporterPort()));
-        addBackendArg(doc, coll, "samplersRegExp", p.samplersRegExp() == null ? ".*" : p.samplersRegExp());
-        addBackendArg(doc, coll, "sloLevels", p.sloLevels() == null ? "0.1;1" : p.sloLevels());
+        addBackendArg(doc, coll, "influxdbMetricsSender",
+                "org.apache.jmeter.visualizers.backend.influxdb.HttpMetricsSender");
+        // Раннер перекрывает адрес через -Jinfluxdb_url, только если он непустой.
+        addBackendArg(doc, coll, "influxdbUrl", "${__P(influxdb_url," + influxUrl + ")}");
+        addBackendArg(doc, coll, "influxdbToken", p.influxdbToken());
+        addBackendArg(doc, coll, "application", application);
+        addBackendArg(doc, coll, "measurement", p.measurement());
+        addBackendArg(doc, coll, "summaryOnly", p.summaryOnly() ? "true" : "false");
+        addBackendArg(doc, coll, "samplersRegex", p.samplersRegExp());
+        addBackendArg(doc, coll, "percentiles", p.percentiles());
+        addBackendArg(doc, coll, "testTitle", testName);
+        addBackendArg(doc, coll, "eventTags", "");
+        addBackendArg(doc, coll, "TAG_runId", "${__P(runId,1)}");
 
         args.appendChild(coll);
         e.appendChild(args);
@@ -485,7 +502,7 @@ public class JmxBuilder {
         String path = template == null || template.isEmpty() ? "/" : template;
         for (Param p : req.params()) {
             if (p.location() == ParamLocation.PATH) {
-                path = replacePlaceholder(path, p.name(), render(p.source()));
+                path = replacePlaceholder(path, p.name(), render(p.source(), p.name()));
             }
         }
         return path;
@@ -496,7 +513,7 @@ public class JmxBuilder {
         String content = req.body().content();
         for (Param p : req.params()) {
             if (p.location() == ParamLocation.BODY) {
-                content = replacePlaceholder(content, p.name(), render(p.source()));
+                content = replacePlaceholder(content, p.name(), render(p.source(), p.name()));
             }
         }
         return content;
@@ -517,7 +534,7 @@ public class JmxBuilder {
         }
         for (Param p : req.params()) {
             if (p.location() == ParamLocation.HEADER) {
-                byName.put(p.name(), render(p.source()));
+                byName.put(p.name(), render(p.source(), p.name()));
             }
         }
         return byName.entrySet().stream()
@@ -526,7 +543,38 @@ public class JmxBuilder {
                 .collect(Collectors.toList());
     }
 
-    private String render(ParamSource source) {
+    private void appendCounters(Document doc, Element ctgChildren, ScenarioGrouping.Group grp) {
+        LinkedHashMap<String, Generator> counters = new LinkedHashMap<>();
+        for (Request req : grp.requests()) {
+            for (Param p : req.params()) {
+                if (p.source() instanceof ParamSource.GeneratorRef g
+                        && g.generator() != null
+                        && g.generator().type() == GeneratorType.COUNTER
+                        && p.name() != null
+                        && !p.name().isBlank()) {
+                    counters.putIfAbsent(p.name(), g.generator());
+                }
+            }
+        }
+        for (Map.Entry<String, Generator> e : counters.entrySet()) {
+            appendWithHashTree(doc, ctgChildren, counterConfig(doc, e.getKey(), e.getValue()));
+        }
+    }
+
+    private Element counterConfig(Document doc, String name, Generator g) {
+        Element e = testElement(doc, "CounterConfig", "CounterConfigGui", "CounterConfig", name);
+        e.appendChild(stringProp(doc, "CounterConfig.start", String.valueOf(or(g.start(), 1))));
+        int end = g.max() == null ? 0 : g.max();
+        e.appendChild(stringProp(doc, "CounterConfig.end", end > 0 ? String.valueOf(end) : ""));
+        e.appendChild(stringProp(doc, "CounterConfig.incr", String.valueOf(or(g.increment(), 1))));
+        e.appendChild(stringProp(doc, "CounterConfig.name", name));
+        e.appendChild(stringProp(doc, "CounterConfig.format", g.format() == null ? "" : g.format()));
+        e.appendChild(boolProp(doc, "CounterConfig.per_user", true));
+        e.appendChild(boolProp(doc, "CounterConfig.reset_on_tg_iteration", false));
+        return e;
+    }
+
+    private String render(ParamSource source, String name) {
         if (source == null) return "";
         if (source instanceof ParamSource.Constant c) {
             return c.value() == null ? "" : c.value();
@@ -538,19 +586,19 @@ public class JmxBuilder {
             return "${" + c.column() + "}";
         }
         if (source instanceof ParamSource.GeneratorRef g) {
-            return renderGenerator(g.generator());
+            return renderGenerator(g.generator(), name);
         }
         return "";
     }
 
-    private String renderGenerator(Generator g) {
+    private String renderGenerator(Generator g, String name) {
         if (g == null || g.type() == null) return "";
         return switch (g.type()) {
             case UUID -> "${__UUID()}";
             case RANDOM_INT -> "${__Random(" + or(g.min(), 0) + "," + or(g.max(), 1000000) + ")}";
             case RANDOM_STRING -> "${__RandomString(" + or(g.length(), 8) + ","
                     + (g.chars() == null ? "abcdefghijklmnopqrstuvwxyz0123456789" : g.chars()) + ")}";
-            case COUNTER -> "${__counter(FALSE)}";
+            case COUNTER -> "${" + name + "}";
             case TIMESTAMP -> "${__time(" + (g.format() == null ? "" : g.format()) + ")}";
         };
     }

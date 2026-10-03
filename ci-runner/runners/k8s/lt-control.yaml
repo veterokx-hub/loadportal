@@ -1,0 +1,86 @@
+# Контур управляющих джоб: lint, pre-check, gate, publish и сборка образов.
+# Runner lt-images (kaniko) запускает здесь root-контейнер без privileged:
+# baseline это разрешает. Генераторы в lt-generators остаются non-root.
+# Применяется платформенной командой один раз. Runner (Helm) получает права
+# создавать поды в этом namespace; у самого пода токена API нет.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lt-control
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lt-control
+  namespace: lt-control
+automountServiceAccountToken: false
+---
+# Потолок: параллельные сборки образов (kaniko) и обычные джобы pre-check/gate.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: lt-control
+  namespace: lt-control
+spec:
+  hard:
+    pods: "20"
+    requests.cpu: "12"
+    limits.cpu: "12"
+    requests.memory: 32Gi
+    limits.memory: 32Gi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: lt-control
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Исходящий — GitLab, S3 (pre-check скачивает сценарий), портал (publish) и registry
+# (kaniko push, trivy pull). Vault отсюда не открыт: секреты резолвит runner
+# и кладёт их в окружение пода. Стенды и VictoriaMetrics этому пулу не нужны.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: control-egress
+  namespace: lt-control
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    # GitLab: clone, артефакты, helper.
+    - to:
+        - ipBlock: {cidr: 10.10.0.10/32}   # REPLACE_ME: адрес GitLab
+      ports:
+        - {protocol: TCP, port: 443}
+    # S3: presigned URL сценария на pre-check. Генераторам S3 не нужен.
+    - to:
+        - ipBlock: {cidr: 10.10.0.20/32}   # REPLACE_ME: адрес S3
+      ports:
+        - {protocol: TCP, port: 443}
+    # Портал: POST verdict.json.
+    - to:
+        - ipBlock: {cidr: 10.10.0.30/32}   # REPLACE_ME: адрес портала
+      ports:
+        - {protocol: TCP, port: 443}
+    # Registry и прокси базовых образов: push kaniko и pull trivy.
+    # kubelet тянет образ самой джобы с ноды, это не egress пода.
+    - to:
+        - ipBlock: {cidr: 10.30.0.0/24}    # REPLACE_ME: registry и прокси
+      ports:
+        - {protocol: TCP, port: 443}

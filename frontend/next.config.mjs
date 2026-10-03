@@ -9,6 +9,11 @@ const ORCHESTRATOR =
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
+  // Эндпоинт /_next/image не нужен (логотип — обычный <img>). Выключаем optimizer
+  // и sharp/libheif, чтобы не тащить AVIF-RCE поверхность.
+  images: {
+    unoptimized: true,
+  },
   async rewrites() {
     return [
       {
@@ -18,6 +23,14 @@ const nextConfig = {
       {
         source: "/api/runs/:path*",
         destination: `${ORCHESTRATOR}/api/runs/:path*`,
+      },
+      {
+        source: "/api/analysis",
+        destination: `${ORCHESTRATOR}/api/analysis`,
+      },
+      {
+        source: "/api/analysis/:path*",
+        destination: `${ORCHESTRATOR}/api/analysis/:path*`,
       },
       {
         source: "/api/settings/gitlab",

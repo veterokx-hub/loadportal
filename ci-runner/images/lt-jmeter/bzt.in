@@ -1,0 +1,2 @@
+# Источник для bzt.lock: pip-compile --generate-hashes --output-file bzt.lock bzt.in
+bzt==1.17.1

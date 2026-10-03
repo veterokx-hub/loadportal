@@ -1,0 +1,13 @@
+# Плагины, которые использует JMX портала (jmeter-builder/JmxBuilder.java), и их зависимости.
+# Формат: <каталог в /opt/jmeter> <url> <sha256>
+# Plugins Manager не используется: он ходит на jmeter-plugins.org в рантайме и не проверяет суммы.
+#
+# Метрики в VictoriaMetrics пишет штатный класс дистрибутива JMeter
+# org.apache.jmeter.visualizers.backend.influxdb.InfluxdbBackendListenerClient
+# (Influx line protocol, VM принимает его на :8428/write). Отдельный jar не нужен.
+#
+# kg.apc.jmeter.timers.VariableThroughputTimer (Throughput Shaping Timer), kg.apc.jmeter.reporters.AutoStop:
+lib     https://repo1.maven.org/maven2/kg/apc/jmeter-plugins-cmn-jmeter/0.7/jmeter-plugins-cmn-jmeter-0.7.jar     98124a4ea7c68f099835a00d91ce84b3d0e537d88dd4ca63ba8af704193bf3e6
+lib/ext https://repo1.maven.org/maven2/kg/apc/jmeter-plugins-tst/2.6/jmeter-plugins-tst-2.6.jar                   7ddcf371020fb7a4edaf9ed1f2a85a33ded8d388852fab859dfe99db89b13c1c
+lib/ext https://repo1.maven.org/maven2/kg/apc/jmeter-plugins-autostop/0.2/jmeter-plugins-autostop-0.2.jar         becb5ff389e2839ff37eee299d4603e3ff045efcbd12a168181e0564fcffdc5d
+lib/ext https://repo1.maven.org/maven2/kg/apc/jmeter-plugins-casutg/2.10/jmeter-plugins-casutg-2.10.jar           49f8f78d24c6c217b2ba233bc18920d9fc7006d8709b84c8a609795295e702dd

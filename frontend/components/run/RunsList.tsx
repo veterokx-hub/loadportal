@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { TestRun } from "@/lib/api";
 import { listRuns } from "@/lib/api";
 import { RUN_STATUS_LABELS } from "@/lib/run-status";
+import { ENGINES } from "@/lib/engines";
 
 export function RunsList({
   refreshKey,
@@ -69,8 +70,11 @@ export function RunsList({
           <label>Движок</label>
           <select value={engineFilter} onChange={(e) => setEngineFilter(e.target.value)}>
             <option value="">Все</option>
-            <option value="jmeter">JMeter</option>
-            <option value="k6">k6</option>
+            {ENGINES.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.short}
+              </option>
+            ))}
           </select>
         </div>
         <div className="field" style={{ flex: "none", alignSelf: "flex-end" }}>

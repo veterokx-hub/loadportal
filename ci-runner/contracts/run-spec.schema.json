@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:loadtest:run-spec:v1",
+  "title": "RUN_SPEC — контракт запуска нагрузочного теста, версия 1",
+  "description": "Единственный источник истины для стыка «Портал НТ → GitLab CI». Портал кладёт этот JSON в переменную RUN_SPEC_B64 (base64). Ручной и legacy-запуск собирают эквивалент из плоских переменных.",
+  "type": "object",
+  "required": ["contract_version", "run", "scenario", "target"],
+  "additionalProperties": false,
+
+  "properties": {
+    "contract_version": {
+      "const": 1,
+      "description": "Ломающие изменения контракта увеличивают это число. CI отказывается исполнять неизвестную версию."
+    },
+
+    "run": {
+      "type": "object",
+      "required": ["tool", "trigger"],
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "enum": ["jmeter", "k6", "gatling"],
+          "description": "Движок нагрузки. Определяет child-pipeline и образ генератора."
+        },
+        "trigger": {
+          "enum": ["portal", "dev-pipeline", "manual"],
+          "description": "Кто инициировал прогон. Влияет на политики: dev-pipeline получает жёсткие лимиты длительности."
+        },
+        "profile": {
+          "enum": ["smoke", "qg", "load", "max-search"],
+          "default": "load",
+          "description": "smoke — только проверка исполнимости скрипта (стадия smoke без нагрузки); qg — короткий гейт в пайплайне разработки; load — полноценный прогон; max-search — поиск максимума."
+        },
+        "smoke": {
+          "enum": ["auto", "always", "never"],
+          "default": "auto",
+          "description": "Стадия smoke перед нагрузкой: 1 под, ~1 RPS на группу, каждый запрос хотя бы раз. auto — включена для load и max-search, выключена для qg."
+        },
+        "portal_run_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "Внутренний id прогона в портале. Обязателен для обратной связи по фазам."
+        },
+        "jira": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]*-[0-9]+$",
+          "description": "Ключ задачи НТ. Используется как человекочитаемая метка прогона."
+        },
+        "name": { "type": "string", "maxLength": 200 }
+      }
+    },
+
+    "scenario": {
+      "type": "object",
+      "required": ["source", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": ["git", "portal", "s3"],
+          "description": "git — файл лежит в репозитории сценариев; portal — CI скачивает артефакт по portal_run_id; s3 — по ключу в бакете."
+        },
+        "path": {
+          "$ref": "#/$defs/relPath",
+          "description": "Относительный путь (git) или ключ (s3). Абсолютные пути и '..' запрещены."
+        },
+        "checksum": {
+          "$ref": "#/$defs/sha256",
+          "description": "sha256 артефакта. Защита от гонки «портал закоммитил один скрипт, а триггер пришёл для другого»."
+        },
+        "entrypoint": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "k6/JMeter: файл внутри zip. Gatling: класс симуляции берётся из pom.xml."
+        },
+        "shardable": {
+          "type": "boolean",
+          "default": false,
+          "description": "Скрипт умеет делить нагрузку между шардами: JMeter читает property load_factor, Gatling — -DloadFactor, k6 делится через execution-segment. Без флага допускается только replicas=1."
+        },
+        "datasets": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "$ref": "#/$defs/relPath" },
+              "checksum": { "$ref": "#/$defs/sha256" }
+            }
+          },
+          "description": "CSV-датасеты, если лежат отдельно от основного артефакта."
+        }
+      }
+    },
+
+    "target": {
+      "type": "object",
+      "required": ["repository"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+          "description": "Логический стенд/сервис под нагрузкой. Ключ для выбора values, квот и лока генератора."
+        },
+        "base_url": { "type": "string", "format": "uri", "maxLength": 2048 },
+        "environment": {
+          "enum": ["dev", "test", "stage", "preprod"],
+          "default": "test",
+          "description": "prod намеренно отсутствует: пайплайн не должен иметь возможности нагрузить продакшен."
+        }
+      }
+    },
+
+    "load": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Переопределение профиля нагрузки. Если не задано — профиль берётся из самого скрипта.",
+      "properties": {
+        "rps": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000 },
+        "users": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "duration_sec": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "ramp_up_sec": { "type": "integer", "minimum": 0, "maximum": 86400 }
+      }
+    },
+
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Ресурсы одного пода-генератора. requests == limits (QoS Guaranteed) выставляет дочерний пайплайн. replicas > 1 — число независимых шардов.",
+      "properties": {
+        "cpu": { "$ref": "#/$defs/cpuQuantity" },
+        "memory": { "$ref": "#/$defs/memoryQuantity" },
+        "replicas": { "type": "integer", "minimum": 1, "maximum": 50 }
+      }
+    },
+
+    "schedule": {
+      "type": "object",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "description": "Окно прогона. Pod генератора ждёт начала окна не дольше LT_MAX_START_LAG_SEC: долгий отложенный старт — задача планировщика портала.",
+      "properties": {
+        "start": { "$ref": "#/$defs/timestamp" },
+        "end": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+
+    "sla": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Пороги Quality Gate. Без них стадия gate может судить только по факту падения инструмента.",
+      "properties": {
+        "p95_ms": { "type": "integer", "minimum": 1 },
+        "p99_ms": { "type": "integer", "minimum": 1 },
+        "error_rate_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "min_rps": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "run_label": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_:-]{1,64}$",
+          "description": "Значение лейбла run_id в метриках. По нему портал строит ссылку на Grafana; без совпадения дашборд будет пустым."
+        },
+        "prometheus_rw_url": { "type": "string", "format": "uri" },
+        "dashboard_uid": { "type": "string", "maxLength": 64 }
+      }
+    },
+
+    "secrets": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "Имена секретов сценария. Значения в контракт не входят: CI берёт их из Vault и кладёт в окружение генератора как LT_SECRET_<name>. Скрипт читает getenv, не файл и не свойство -J.",
+      "items": {
+        "type": "object",
+        "required": ["name", "vault"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{0,31}$",
+            "description": "Суффикс переменной. TOKEN -> LT_SECRET_TOKEN."
+          },
+          "vault": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._/-]{1,200}@[A-Za-z0-9._-]{1,64}$",
+            "description": "Путь GitLab secrets: path@engine, например loadtest/payments/TOKEN@kv. Движок KV и роль JWT настраиваются в Vault отдельно."
+          }
+        }
+      }
+    },
+
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Происхождение прогона. Заполняется порталом или dev-пайплайном; CI дополняет своими CI_* и возвращает в портал.",
+      "properties": {
+        "requested_by": { "type": "string", "maxLength": 128 },
+        "source_project": { "type": "string", "maxLength": 512 },
+        "source_branch": { "type": "string", "maxLength": 256 },
+        "source_commit": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+        "source_pipeline_url": { "type": "string", "format": "uri" },
+        "build_number": { "type": "string", "maxLength": 64 },
+        "release_version": { "type": "string", "maxLength": 64 }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "if": {
+        "required": ["run"],
+        "properties": { "run": { "required": ["tool"], "properties": { "tool": { "const": "jmeter" } } } }
+      },
+      "then": {
+        "properties": { "scenario": { "properties": { "path": { "pattern": "\\.(jmx|zip)$" } } } },
+        "$comment": "JMeter исполняет .jmx; zip — когда рядом нужны CSV-датасеты."
+      }
+    },
+    {
+      "if": {
+        "required": ["run"],
+        "properties": { "run": { "required": ["tool"], "properties": { "tool": { "const": "k6" } } } }
+      },
+      "then": {
+        "properties": { "scenario": { "properties": { "path": { "pattern": "\\.(js|zip)$" } } } }
+      }
+    },
+    {
+      "if": {
+        "required": ["run"],
+        "properties": { "run": { "required": ["tool"], "properties": { "tool": { "const": "gatling" } } } }
+      },
+      "then": {
+        "properties": { "scenario": { "properties": { "path": { "pattern": "\\.zip$" } } } },
+        "$comment": "Gatling исполняет скомпилированную Simulation, поэтому артефакт портала — всегда Maven-проект в zip."
+      }
+    }
+  ],
+
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "relPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9._][A-Za-z0-9._/-]*$"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "RFC 3339. Допускается разделитель «пробел» и отсутствие смещения — тогда применяется LT_DEFAULT_TZ.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(:[0-9]{2})?(\\.[0-9]+)?(Z|[+-][0-9]{2}:?[0-9]{2})?$"
+    },
+    "cpuQuantity": {
+      "type": "string",
+      "pattern": "^([0-9]+m|[0-9]+(\\.[0-9]+)?)$"
+    },
+    "memoryQuantity": {
+      "type": "string",
+      "pattern": "^[0-9]+(Ki|Mi|Gi|Ti|K|M|G|T)?$"
+    }
+  }
+}

@@ -2,6 +2,8 @@ package com.loadtest.jmeterbuilder.jmx;
 
 import com.loadtest.jmeterbuilder.model.*;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.PropertyNamingStrategies;
+import tools.jackson.databind.json.JsonMapper;
 import org.w3c.dom.Document;
 
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -98,11 +100,14 @@ class JmxBuilderTest {
         // repeat=3 у profile -> Loop Controller на 3 повтора
         assertTrue(jmx.contains("<LoopController "));
         assertTrue(jmx.contains(">3</stringProp>"));
-        // Prometheus Backend Listener (Kolesnikov)
         assertTrue(jmx.contains("<BackendListener "));
-        assertTrue(jmx.contains("com.github.kolesnikovm.PrometheusListener"));
+        assertTrue(jmx.contains(
+                "org.apache.jmeter.visualizers.backend.influxdb.InfluxdbBackendListenerClient"));
+        assertTrue(jmx.contains("${__P(influxdb_url,http://victoriametrics:8428/write?db=jmeter)}"));
+        assertTrue(jmx.contains("TAG_runId"));
+        assertTrue(jmx.contains("${__P(runId,1)}"));
         assertTrue(jmx.contains(">demo-api</stringProp>"));
-        assertTrue(jmx.contains(">9001</stringProp>"));
+        assertFalse(jmx.contains("PrometheusListener"));
 
         Document doc = DocumentBuilderFactory.newInstance().newDocumentBuilder()
                 .parse(new ByteArrayInputStream(jmx.getBytes(StandardCharsets.UTF_8)));
@@ -139,6 +144,51 @@ class JmxBuilderTest {
         assertTrue(jmx.contains("Argument.value\">prp</stringProp>"));
         assertFalse(jmx.contains("activeSoftblockDebitCardList/prp"));
         assertFalse(jmx.contains("activeSoftblockDebitCardList?param=prp"));
+    }
+
+    @Test
+    void influxListenerUsesPortalFields() {
+        PrometheusConfig metrics = new PrometheusConfig(
+                9001, "1", "GET /.*", "0.1;1",
+                "http://vm.local:8428/write?db=jmeter", "payments", "load", "95;99", true, "secret");
+        Request req = new Request(
+                "q", 1, "GET list", "GET", "/items", null,
+                List.of(), List.of(), Body.none(), List.of(), List.of(),
+                new Intensity(1.0, 1, 1), Validation.defaults(), null, 1);
+        Scenario s = new Scenario("checkout", SourceType.OPENAPI, "https://api.example.com",
+                LoadConfig.defaults(), List.of(), List.of(req), AutoStop.disabled(), metrics);
+        String jmx = builder.build(s);
+        assertTrue(jmx.contains("${__P(influxdb_url,http://vm.local:8428/write?db=jmeter)}"));
+        assertTrue(jmx.contains(">payments</stringProp>"));
+        assertTrue(jmx.contains(">load</stringProp>"));
+        assertTrue(jmx.contains(">95;99</stringProp>"));
+        assertTrue(jmx.contains(">true</stringProp>"));
+        assertTrue(jmx.contains(">secret</stringProp>"));
+        assertTrue(jmx.contains(">GET /.*</stringProp>"));
+    }
+
+    @Test
+    void oldPrometheusJsonGetsVmDefaults() throws Exception {
+        var mapper = JsonMapper.builderWithJackson2Defaults()
+                .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
+                .build();
+        PrometheusConfig p = mapper.readValue(
+                "{\"exporter_port\":9001,\"run_id\":\"7\",\"samplers_reg_exp\":\"a.*\",\"slo_levels\":\"0.1;1\"}",
+                PrometheusConfig.class);
+        assertEquals("http://victoriametrics:8428/write?db=jmeter", p.influxdbUrl());
+        assertEquals("a.*", p.samplersRegExp());
+        assertEquals("jmeter", p.measurement());
+        assertFalse(p.summaryOnly());
+    }
+
+    @Test
+    void influxUrlWithCommaIsRejected() {
+        PrometheusConfig metrics = new PrometheusConfig(
+                9001, "1", ".*", "0.1;1",
+                "http://vm.local:8428/write?db=jmeter,extra=1", "", "jmeter", "99;95;90", false, "");
+        Scenario s = new Scenario("checkout", SourceType.OPENAPI, "https://api.example.com",
+                LoadConfig.defaults(), List.of(), List.of(), AutoStop.disabled(), metrics);
+        assertThrows(JmxBuilder.JmxBuildException.class, () -> builder.build(s));
     }
 
     private static int countOccurrences(String haystack, String needle) {

@@ -1,6 +1,6 @@
 package com.loadtest.constructor.client;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.loadtest.constructor.model.Scenario;
 import com.loadtest.constructor.service.ModuleEndpoints;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -10,7 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
-/** Клиент модуля k6-generator: сборка .js (или zip с CSV-датасетами). */
+/** Клиент модуля k6-generator: zip со script.js, lib/ и CSV. */
 @Component
 public class K6GeneratorClient {
 
@@ -22,7 +22,7 @@ public class K6GeneratorClient {
     public K6GeneratorClient(
             ModuleEndpoints endpoints,
             ObjectMapper objectMapper,
-            @Qualifier("sharedRestClient") RestClient restClient) {
+            @Qualifier("internalRestClient") RestClient restClient) {
         this.endpoints = endpoints;
         this.objectMapper = objectMapper;
         this.restClient = restClient;
@@ -43,13 +43,13 @@ public class K6GeneratorClient {
                 .retrieve()
                 .toEntity(byte[].class);
 
-        // Тип и имя файла определяет генератор: одиночный .js или zip, если есть датасеты.
+        // Генератор всегда отдаёт zip: script.js и библиотеки рядом.
         MediaType ct = resp.getHeaders().getContentType();
         String cd = resp.getHeaders().getFirst(HttpHeaders.CONTENT_DISPOSITION);
         return new BinaryResult(
                 resp.getBody(),
                 ct != null ? ct.toString() : "application/octet-stream",
-                cd != null ? cd : "attachment; filename=\"scenario.js\"");
+                cd != null ? cd : "attachment; filename=\"scenario.zip\"");
     }
 
     /** Артефакт вместе с заголовками, под которыми его отдаст constructor. */

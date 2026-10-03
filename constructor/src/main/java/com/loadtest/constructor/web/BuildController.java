@@ -1,5 +1,6 @@
 package com.loadtest.constructor.web;
 
+import com.loadtest.constructor.client.GatlingGeneratorClient;
 import com.loadtest.constructor.client.JmeterBuilderClient;
 import com.loadtest.constructor.client.K6GeneratorClient;
 import com.loadtest.constructor.config.AuthInterceptor;
@@ -7,6 +8,7 @@ import com.loadtest.constructor.metrics.PortalMetrics;
 import com.loadtest.constructor.model.Scenario;
 import com.loadtest.constructor.persistence.BuildRecordEntity;
 import com.loadtest.constructor.persistence.ScriptEntity;
+import com.loadtest.constructor.service.AuditService;
 import com.loadtest.constructor.service.BuildHistoryService;
 import com.loadtest.constructor.service.ScriptService;
 import com.loadtest.constructor.web.dto.BuildSaveRequest;
@@ -23,21 +25,27 @@ public class BuildController {
 
     private final JmeterBuilderClient jmeterBuilderClient;
     private final K6GeneratorClient k6GeneratorClient;
+    private final GatlingGeneratorClient gatlingGeneratorClient;
     private final BuildHistoryService buildHistoryService;
     private final ScriptService scriptService;
     private final PortalMetrics metrics;
+    private final AuditService auditService;
 
     public BuildController(
             JmeterBuilderClient jmeterBuilderClient,
             K6GeneratorClient k6GeneratorClient,
+            GatlingGeneratorClient gatlingGeneratorClient,
             BuildHistoryService buildHistoryService,
             ScriptService scriptService,
-            PortalMetrics metrics) {
+            PortalMetrics metrics,
+            AuditService auditService) {
         this.jmeterBuilderClient = jmeterBuilderClient;
         this.k6GeneratorClient = k6GeneratorClient;
+        this.gatlingGeneratorClient = gatlingGeneratorClient;
         this.buildHistoryService = buildHistoryService;
         this.scriptService = scriptService;
         this.metrics = metrics;
+        this.auditService = auditService;
     }
 
     /** Сохранить сборку + сгенерировать script_id (без скачивания). */
@@ -53,6 +61,7 @@ public class BuildController {
                 username, body.scenario(), engine, artifact.filename());
         ScriptEntity script = scriptService.saveFromBuild(
                 username, build.getId(), engine, artifact.filename(), artifact.body());
+        auditService.record(username, AuditService.BUILD_SAVE, engine + " " + artifact.filename());
         return new BuildSaveResponse(
                 build.getId().toString(),
                 script.getId().toString(),
@@ -67,18 +76,25 @@ public class BuildController {
      */
     @PostMapping("/build")
     public ResponseEntity<byte[]> build(@RequestBody Scenario scenario, HttpServletRequest request) {
-        AuthInterceptor.requireAuth(request);
-        return respond(scenario, "jmeter");
+        String username = AuthInterceptor.requireAuth(request).username();
+        return respond(username, scenario, "jmeter");
     }
 
     @PostMapping("/build/k6")
     public ResponseEntity<byte[]> buildK6(@RequestBody Scenario scenario, HttpServletRequest request) {
-        AuthInterceptor.requireAuth(request);
-        return respond(scenario, "k6");
+        String username = AuthInterceptor.requireAuth(request).username();
+        return respond(username, scenario, "k6");
     }
 
-    private ResponseEntity<byte[]> respond(Scenario scenario, String engine) {
+    @PostMapping("/build/gatling")
+    public ResponseEntity<byte[]> buildGatling(@RequestBody Scenario scenario, HttpServletRequest request) {
+        String username = AuthInterceptor.requireAuth(request).username();
+        return respond(username, scenario, "gatling");
+    }
+
+    private ResponseEntity<byte[]> respond(String username, Scenario scenario, String engine) {
         GeneratedArtifact artifact = generate(scenario, engine);
+        auditService.record(username, AuditService.SCRIPT_EXPORT, engine + " " + artifact.filename());
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, artifact.contentDisposition())
                 .contentType(MediaType.parseMediaType(artifact.contentType()))
@@ -92,9 +108,11 @@ public class BuildController {
     private GeneratedArtifact generate(Scenario scenario, String engine) {
         long startedAt = System.nanoTime();
         try {
-            GeneratedArtifact artifact = "k6".equals(engine)
-                    ? fromK6(scenario)
-                    : fromJmeter(scenario);
+            GeneratedArtifact artifact = switch (engine) {
+                case "k6" -> fromK6(scenario);
+                case "gatling" -> fromGatling(scenario);
+                default -> fromJmeter(scenario);
+            };
             int size = artifact.body() == null ? 0 : artifact.body().length;
             metrics.recordBuild(engine, true, System.nanoTime() - startedAt, size);
             return artifact;
@@ -107,6 +125,12 @@ public class BuildController {
     private GeneratedArtifact fromK6(Scenario scenario) {
         K6GeneratorClient.BinaryResult r = k6GeneratorClient.generateK6(scenario);
         String fn = filenameFromDisposition(r.contentDisposition(), safeName(scenario.name()) + ".js");
+        return new GeneratedArtifact(fn, r.body(), r.contentType(), r.contentDisposition());
+    }
+
+    private GeneratedArtifact fromGatling(Scenario scenario) {
+        GatlingGeneratorClient.BinaryResult r = gatlingGeneratorClient.generateGatling(scenario);
+        String fn = filenameFromDisposition(r.contentDisposition(), safeName(scenario.name()) + ".zip");
         return new GeneratedArtifact(fn, r.body(), r.contentType(), r.contentDisposition());
     }
 

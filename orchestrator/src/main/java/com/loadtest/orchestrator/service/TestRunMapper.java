@@ -1,9 +1,11 @@
 package com.loadtest.orchestrator.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
 import com.loadtest.orchestrator.persistence.PortalSettingsEntity;
 import com.loadtest.orchestrator.persistence.TestRunEntity;
+import com.loadtest.orchestrator.web.dto.RunVerdictDto;
 import com.loadtest.orchestrator.web.dto.TestRunDto;
 import com.loadtest.orchestrator.web.dto.TestRunEventDto;
 import org.slf4j.Logger;
@@ -13,6 +15,7 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.StreamSupport;
 
 /** Маппинг entity ↔ DTO и побочные представления (Grafana URL, журнал событий). */
 @Component
@@ -37,6 +40,10 @@ public class TestRunMapper {
                 run.getBuildId() != null ? run.getBuildId().toString() : null,
                 run.getScriptId() != null ? run.getScriptId().toString() : null,
                 run.getTargetUrl(),
+                run.getTargetCluster(),
+                run.getTargetNamespace(),
+                run.getTargetService(),
+                run.getTargetContainer(),
                 json.readMap(run.getParamsJson()),
                 json.readStringMap(run.getLabelsJson()),
                 run.getStatus().name().toLowerCase(),
@@ -47,7 +54,55 @@ public class TestRunMapper {
                 run.getEndedAt(),
                 run.getErrorMessage(),
                 run.getCreatedAt(),
-                json.readList(run.getEventsJson(), EVENTS_TYPE));
+                json.readList(run.getEventsJson(), EVENTS_TYPE),
+                verdictOf(run));
+    }
+
+    private RunVerdictDto verdictOf(TestRunEntity run) {
+        String status = run.getVerdictStatus();
+        if (status == null || status.isBlank()) {
+            return null;
+        }
+        JsonNode root = null;
+        try {
+            String raw = run.getVerdictJson();
+            if (raw != null && !raw.isBlank()) {
+                root = json.mapper().readTree(raw);
+            }
+        } catch (JacksonException ex) {
+            log.warn("Cannot parse verdict of run {}: {}", run.getId(), ex.getMessage());
+        }
+        JsonNode metrics = root == null ? null : root.path("metrics");
+        List<String> reasons = List.of();
+        if (root != null && root.path("reasons").isArray()) {
+            reasons = StreamSupport.stream(root.path("reasons").spliterator(), false)
+                    .map(JsonNode::asText)
+                    .filter(text -> !text.isBlank())
+                    .limit(20)
+                    .toList();
+        }
+        return new RunVerdictDto(
+                status,
+                longOrNull(metrics, "samples"),
+                doubleOrNull(metrics, "p95_ms"),
+                doubleOrNull(metrics, "p99_ms"),
+                doubleOrNull(metrics, "error_rate_pct"),
+                doubleOrNull(metrics, "rps"),
+                reasons);
+    }
+
+    private static Long longOrNull(JsonNode node, String field) {
+        if (node == null || !node.path(field).isNumber()) {
+            return null;
+        }
+        return node.path(field).asLong();
+    }
+
+    private static Double doubleOrNull(JsonNode node, String field) {
+        if (node == null || !node.path(field).isNumber()) {
+            return null;
+        }
+        return node.path(field).asDouble();
     }
 
     public String buildGrafanaUrl(PortalSettingsEntity settings, TestRunEntity run) {
@@ -83,7 +138,7 @@ public class TestRunMapper {
                     EVENTS_TYPE));
             events.add(new TestRunEventDto(Instant.now(), event, detail));
             run.setEventsJson(json.mapper().writeValueAsString(events));
-        } catch (JsonProcessingException ex) {
+        } catch (JacksonException ex) {
             log.warn("Cannot append run event '{}': {}", event, ex.getMessage());
             if (previous != null) {
                 run.setEventsJson(previous);

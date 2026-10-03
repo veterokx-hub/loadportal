@@ -1,0 +1,40 @@
+{
+  "contract_version": 1,
+  "run": {
+    "tool": "k6",
+    "trigger": "dev-pipeline",
+    "profile": "qg",
+    "portal_run_id": "8c0d5e77-1b2a-4c3d-9e8f-77aa11bb22cc",
+    "name": "QG payments-api"
+  },
+  "scenario": {
+    "source": "git",
+    "path": "scenarios/payments-api/qg-smoke.js"
+  },
+  "target": {
+    "repository": "payments-api",
+    "base_url": "https://payments-api.test.corp.local",
+    "environment": "test"
+  },
+  "load": {
+    "rps": 50,
+    "duration_sec": 600,
+    "ramp_up_sec": 60
+  },
+  "resources": {
+    "cpu": "1",
+    "memory": "2Gi"
+  },
+  "sla": {
+    "p95_ms": 300,
+    "error_rate_pct": 1.0,
+    "min_rps": 45
+  },
+  "meta": {
+    "source_project": "fintech/payments/payments-api",
+    "source_branch": "master",
+    "source_commit": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+    "source_pipeline_url": "https://gitlab.services.mts.ru/fintech/payments/payments-api/-/pipelines/778812",
+    "build_number": "778812"
+  }
+}

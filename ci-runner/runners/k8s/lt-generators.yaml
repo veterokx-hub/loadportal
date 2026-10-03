@@ -1,0 +1,84 @@
+# Контур генераторов: namespace, в котором runner lt-generators создаёт поды джоб.
+# Применяется платформенной командой один раз; runner получает права только на этот namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lt-generators
+  labels:
+    # baseline enforce: helper-контейнер runner'а не проходит restricted целиком.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+---
+# Генератору API кластера не нужен: токен не монтируется вовсе.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lt-generator
+  namespace: lt-generators
+automountServiceAccountToken: false
+---
+# Потолок контура: сломанный RUN_SPEC с replicas=50 не выест кластер.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: lt-generators
+  namespace: lt-generators
+spec:
+  hard:
+    pods: "25"
+    requests.cpu: "320"
+    limits.cpu: "320"
+    requests.memory: 640Gi
+    limits.memory: 640Gi
+---
+# По умолчанию запрещено всё: и вход, и выход.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: lt-generators
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Исходящий — только то, без чего прогон не работает.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: generator-egress
+  namespace: lt-generators
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    # GitLab: helper скачивает артефакт pre-check и выгружает results/.
+    # Vault сюда не открыт: секреты резолвит runner и кладёт в LT_SECRET_*.
+    - to:
+        - ipBlock: {cidr: 10.10.0.10/32}   # REPLACE_ME: адрес GitLab
+      ports:
+        - {protocol: TCP, port: 443}
+    # VictoriaMetrics: JMeter шлёт Influx line protocol (InfluxdbBackendListenerClient),
+    # k6 — remote write. Оба ходят на :8428, входящий scrape генераторам не нужен.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - {protocol: TCP, port: 8428}
+    # Тестовые стенды dev/test/stage/preprod. Сети prod сюда не добавляются никогда.
+    - to:
+        - ipBlock: {cidr: 10.20.0.0/16}    # REPLACE_ME: подсети стендов НТ
+      ports:
+        - {protocol: TCP, port: 80}
+        - {protocol: TCP, port: 443}

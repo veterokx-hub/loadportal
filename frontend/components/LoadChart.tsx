@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import { formatRps, type ProfilePoint } from "@/lib/profile";
 
 export interface Series {
@@ -80,6 +80,7 @@ const TOTAL_LABEL = "Суммарная интенсивность";
 export function LoadChart({ series }: { series: Series[] }) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [isolated, setIsolated] = useState<string | null>(null);
+  const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null);
 
   const totalActive = hovered === TOTAL_LABEL || isolated === TOTAL_LABEL;
 
@@ -137,6 +138,13 @@ export function LoadChart({ series }: { series: Series[] }) {
   const endT = maxT;
   const endRps = showTotal ? totalPts[totalPts.length - 1].rps : visible[0]?.points.slice(-1)[0]?.rps ?? 0;
 
+  function hoverAt(e: MouseEvent<SVGElement>, label: string) {
+    setHovered(label);
+    const svg = (e.currentTarget.ownerSVGElement ?? e.currentTarget) as SVGSVGElement;
+    const r = svg.getBoundingClientRect();
+    setTip({ x: e.clientX - r.left, y: e.clientY - r.top, text: label });
+  }
+
   return (
     <div className="chart-inner">
       <svg
@@ -144,7 +152,10 @@ export function LoadChart({ series }: { series: Series[] }) {
         viewBox={`0 0 ${W} ${H}`}
         role="img"
         aria-label="Профиль нагрузки"
-        onMouseLeave={() => setHovered(null)}
+        onMouseLeave={() => {
+          setHovered(null);
+          setTip(null);
+        }}
       >
         <defs>
           <linearGradient id="ltpFill" x1="0" y1="0" x2="0" y2="1">
@@ -206,7 +217,8 @@ export function LoadChart({ series }: { series: Series[] }) {
               fill="url(#ltpFill)"
               opacity={hovered && hovered !== TOTAL_LABEL ? 0.4 : 1}
               style={{ transition: "d 0.5s cubic-bezier(.4,0,.2,1), opacity 0.25s ease", cursor: "pointer" }}
-              onMouseEnter={() => setHovered(TOTAL_LABEL)}
+              onMouseEnter={(e) => hoverAt(e, TOTAL_LABEL)}
+              onMouseMove={(e) => hoverAt(e, TOTAL_LABEL)}
               onClick={() => setIsolated(isolated === TOTAL_LABEL ? null : TOTAL_LABEL)}
             />
             <path
@@ -229,7 +241,8 @@ export function LoadChart({ series }: { series: Series[] }) {
               stroke="transparent"
               strokeWidth={14}
               style={{ cursor: "pointer" }}
-              onMouseEnter={() => setHovered(TOTAL_LABEL)}
+              onMouseEnter={(e) => hoverAt(e, TOTAL_LABEL)}
+              onMouseMove={(e) => hoverAt(e, TOTAL_LABEL)}
               onClick={() => setIsolated(isolated === TOTAL_LABEL ? null : TOTAL_LABEL)}
             />
             {/* пульсирующий маркер текущего значения */}
@@ -255,7 +268,8 @@ export function LoadChart({ series }: { series: Series[] }) {
                 stroke="transparent"
                 strokeWidth={14}
                 style={{ cursor: "pointer" }}
-                onMouseEnter={() => setHovered(s.label)}
+                onMouseEnter={(e) => hoverAt(e, s.label)}
+                onMouseMove={(e) => hoverAt(e, s.label)}
                 onClick={() => setIsolated(isolated === s.label ? null : s.label)}
               />
               <path
@@ -276,6 +290,14 @@ export function LoadChart({ series }: { series: Series[] }) {
         <text x={padL} y={12} fontSize={10} fill="var(--muted)">RPS</text>
         <text x={W - padR} y={H - 2} fontSize={10} fill="var(--muted)" textAnchor="end">время</text>
       </svg>
+      {tip && (
+        <div
+          className="chart-tip"
+          style={{ left: tip.x + 12, top: Math.max(4, tip.y - 28) }}
+        >
+          {tip.text}
+        </div>
+      )}
 
       <div className="legend">
         {showTotal && (
@@ -313,8 +335,6 @@ export function LoadChart({ series }: { series: Series[] }) {
           const dimmed =
             (isolated !== null && isolated !== s.label && isolated !== TOTAL_LABEL) ||
             (isolated === null && hovered !== null && hovered !== s.label && hovered !== TOTAL_LABEL);
-          const short =
-            s.label.length > 42 ? s.label.slice(0, 40) + "…" : s.label;
           return (
             <span
               className="item"
@@ -339,7 +359,7 @@ export function LoadChart({ series }: { series: Series[] }) {
                   flexShrink: 0,
                 }}
               />
-              <span className="legend-text">{short}</span>
+              <span className="legend-text">{s.label}</span>
             </span>
           );
         })}

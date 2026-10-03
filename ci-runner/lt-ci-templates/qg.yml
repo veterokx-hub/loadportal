@@ -1,0 +1,104 @@
+# Лёгкий quality gate для продуктового пайплайна.
+#
+#   include:
+#     - project: loadtest/cicd-runner-test   # REPLACE_ME: путь проекта пайплайна НТ
+#       ref: master
+#       file: /lt-ci-templates/qg.yml
+#
+# GitLab 16+. Продуктовый проект должен быть в allowlist job token проекта НТ,
+# иначе trigger отклонится. В продуктовом пайплайне нужна стадия test.
+#
+# Обязательные переменные (проект или пайплайн):
+#   LT_QG_TOOL            k6 | jmeter | gatling
+#   LT_QG_SCENARIO        путь сценария в репозитории НТ, например scenarios/payments-api/qg.js
+#   LT_QG_REPOSITORY      логический стенд, [a-z0-9-]
+#   LT_QG_BASE_URL        https://сервис.test.corp.local
+#   один из порогов: LT_QG_P95_MS, LT_QG_P99_MS, LT_QG_ERROR_RATE_PCT, LT_QG_MIN_RPS
+#
+# Необязательные:
+#   LT_PROJECT_PATH, LT_QG_ENVIRONMENT (test), LT_QG_DURATION_SEC (600),
+#   LT_QG_CPU (1), LT_QG_MEMORY (2Gi), LT_QG_RPS
+#   LT_QG_SECRETS   TOKEN=loadtest/payments/TOKEN@kv,API_KEY=loadtest/payments/API_KEY@kv
+#   LT_QG_ENABLED=false     выключить гейт, не убирая include
+#   LT_QG_ON_MR=true        на merge request гейт ручной; по умолчанию MR его не запускает
+#
+# Сценарий лежит в репозитории пайплайна НТ, не в продуктовом. Несколько шардов
+# и своё окно — это полный RUN_SPEC, а не этот шаблон.
+# Чтобы гейт шёл после деплоя, переопределите needs у lt-quality-gate.
+
+variables:
+  LT_PROJECT_PATH: "loadtest/cicd-runner-test"
+  LT_QG_ENVIRONMENT: "test"
+  LT_QG_DURATION_SEC: "600"
+  LT_QG_CPU: "1"
+  LT_QG_MEMORY: "2Gi"
+
+.lt-qg-rules: &lt-qg-rules
+  - if: '$LT_QG_ENABLED == "false"'
+    when: never
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $LT_QG_ON_MR != "true"'
+    when: never
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    when: manual
+    allow_failure: true
+  - when: on_success
+
+lt-qg-check:
+  stage: test
+  rules: *lt-qg-rules
+  script:
+    - |
+      missing=""
+      [ -n "${LT_QG_TOOL:-}" ] || missing="$missing LT_QG_TOOL"
+      [ -n "${LT_QG_SCENARIO:-}" ] || missing="$missing LT_QG_SCENARIO"
+      [ -n "${LT_QG_REPOSITORY:-}" ] || missing="$missing LT_QG_REPOSITORY"
+      [ -n "${LT_QG_BASE_URL:-}" ] || missing="$missing LT_QG_BASE_URL"
+      if [ -n "$missing" ]; then
+        echo "ERROR: для quality gate задайте:$missing" >&2
+        exit 1
+      fi
+      case "$LT_QG_TOOL" in
+        k6|jmeter|gatling) ;;
+        *) echo "ERROR: LT_QG_TOOL=$LT_QG_TOOL, ожидается k6, jmeter или gatling" >&2; exit 1 ;;
+      esac
+      if [ -z "${LT_QG_P95_MS:-}${LT_QG_P99_MS:-}${LT_QG_ERROR_RATE_PCT:-}${LT_QG_MIN_RPS:-}" ]; then
+        echo "ERROR: задайте хотя бы один порог LT_QG_P95_MS, LT_QG_P99_MS, LT_QG_ERROR_RATE_PCT или LT_QG_MIN_RPS" >&2
+        exit 1
+      fi
+      echo "QG: $LT_QG_TOOL $LT_QG_SCENARIO -> $LT_QG_BASE_URL (${LT_QG_DURATION_SEC}s)"
+
+lt-quality-gate:
+  stage: test
+  needs: [lt-qg-check]
+  rules:
+    - if: '$LT_QG_ENABLED == "false"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $LT_QG_ON_MR != "true"'
+      when: never
+    - when: on_success
+  trigger:
+    project: $LT_PROJECT_PATH
+    strategy: depend
+    forward:
+      pipeline_variables: false
+  variables:
+    LT_QG: "1"
+    TOOL: $LT_QG_TOOL
+    SCENARIO_PATH: $LT_QG_SCENARIO
+    REPOSITORY: $LT_QG_REPOSITORY
+    BASE_URL: $LT_QG_BASE_URL
+    ENVIRONMENT: $LT_QG_ENVIRONMENT
+    DURATION_SEC: $LT_QG_DURATION_SEC
+    CPU: $LT_QG_CPU
+    MEMORY: $LT_QG_MEMORY
+    RPS: $LT_QG_RPS
+    SLA_P95_MS: $LT_QG_P95_MS
+    SLA_P99_MS: $LT_QG_P99_MS
+    SLA_ERROR_RATE_PCT: $LT_QG_ERROR_RATE_PCT
+    SLA_MIN_RPS: $LT_QG_MIN_RPS
+    LT_QG_SECRETS: $LT_QG_SECRETS
+    SOURCE_PROJECT: $CI_PROJECT_PATH
+    SOURCE_BRANCH: $CI_COMMIT_REF_NAME
+    SOURCE_COMMIT: $CI_COMMIT_SHA
+    SOURCE_PIPELINE_URL: $CI_PIPELINE_URL
+    BUILD_NUMBER: $CI_PIPELINE_IID

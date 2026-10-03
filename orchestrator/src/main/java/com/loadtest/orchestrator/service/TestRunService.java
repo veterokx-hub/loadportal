@@ -1,6 +1,8 @@
 package com.loadtest.orchestrator.service;
 
+import com.loadtest.orchestrator.client.GitLabClient;
 import com.loadtest.orchestrator.client.GitLabException;
+import com.loadtest.orchestrator.config.ExternalConnections;
 import com.loadtest.orchestrator.metrics.PortalMetrics;
 import com.loadtest.orchestrator.model.TestRunStatus;
 import com.loadtest.orchestrator.persistence.PortalSettingsEntity;
@@ -33,8 +35,8 @@ import java.util.UUID;
 public class TestRunService {
 
     private static final Logger log = LoggerFactory.getLogger(TestRunService.class);
-    private static final String DEFAULT_CPU = "500m";
-    private static final String DEFAULT_MEMORY = "2Gi";
+    private static final String DEFAULT_CPU = "2";
+    private static final String DEFAULT_MEMORY = "4Gi";
     private static final String DEFAULT_REPOSITORY = "lt-ump";
 
     private final TestRunRepository testRunRepository;
@@ -45,6 +47,9 @@ public class TestRunService {
     private final JsonSupport json;
     private final PortalMetrics metrics;
     private final TransactionTemplate tx;
+    private final AuditService auditService;
+    private final ExternalConnections connections;
+    private final GitLabClient gitLabClient;
 
     public TestRunService(
             TestRunRepository testRunRepository,
@@ -54,7 +59,10 @@ public class TestRunService {
             TestRunMapper mapper,
             JsonSupport json,
             PortalMetrics metrics,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            AuditService auditService,
+            ExternalConnections connections,
+            GitLabClient gitLabClient) {
         this.testRunRepository = testRunRepository;
         this.portalSettingsService = portalSettingsService;
         this.scriptSourceResolver = scriptSourceResolver;
@@ -63,6 +71,9 @@ public class TestRunService {
         this.json = json;
         this.metrics = metrics;
         this.tx = new TransactionTemplate(transactionManager);
+        this.auditService = auditService;
+        this.connections = connections;
+        this.gitLabClient = gitLabClient;
     }
 
     public List<TestRunDto> listRuns(AuthContext ctx) {
@@ -82,6 +93,35 @@ public class TestRunService {
     }
 
     /**
+     * Останавливает прогон: GitLab cancel pipeline (нужен API-токен, trigger token это не умеет),
+     * затем статус {@code canceled}. Поды генератора снимает CI, когда job прерван.
+     */
+    public TestRunDto cancel(UUID id, AuthContext ctx) {
+        TestRunEntity run = testRunRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Прогон не найден"));
+        if (!ctx.isAdmin() && !run.getUsername().equals(ctx.username())) {
+            throw new IllegalArgumentException("Нет доступа к этому прогону");
+        }
+        if (run.getStatus().isTerminal()) {
+            throw new IllegalArgumentException("Прогон уже завершён");
+        }
+        Long pipelineId = run.getGitlabPipelineId();
+        if (pipelineId != null) {
+            PortalSettingsEntity settings = portalSettingsService.loadEntity();
+            String token = connections.gitlabApiToken().orElseThrow(() -> new IllegalArgumentException(
+                    "Нет API-токена GitLab (Vault loadtest/gitlab/api-token или GITLAB_API_TOKEN)"));
+            gitLabClient.cancelPipeline(
+                    connections.gitlabBaseUrl(settings.getGitlabBaseUrl()),
+                    connections.gitlabProjectId(settings.getGitlabProjectId()),
+                    token,
+                    pipelineId);
+        }
+        tx.executeWithoutResult(status -> markCanceled(id, pipelineId));
+        auditService.record(ctx.username(), AuditService.RUN_CANCEL, id.toString());
+        return mapper.toDto(testRunRepository.findById(id).orElseThrow());
+    }
+
+    /**
      * Создаёт прогон, заливает скрипт и триггерит pipeline.
      * При ошибке GitLab прогон сохраняется со статусом {@code failed}.
      */
@@ -97,6 +137,10 @@ public class TestRunService {
 
         metrics.recordRunCreated(source.engine());
         metrics.recordRunStatus(TestRunStatus.QUEUED);
+        auditService.record(
+                ctx.username(),
+                AuditService.RUN_START,
+                source.engine() + " " + queued.run().getTestId());
 
         MDC.put("run_id", queued.run().getId().toString());
         try {
@@ -136,6 +180,7 @@ public class TestRunService {
                 source.targetUrl(),
                 json.write(params),
                 json.write(req.labels() == null ? Map.of() : req.labels()));
+        run.setTarget(req.targetCluster(), req.targetNamespace(), req.targetService(), req.targetContainer());
         mapper.appendEvent(run, "created", "Прогон создан (test_id=" + testId + ")");
         run = testRunRepository.save(run);
 
@@ -153,14 +198,15 @@ public class TestRunService {
             UUID runId,
             String testId,
             String filename) {
-        String scenarioPath = TextSupport.firstNonBlank(
-                req.scenarioPath(),
-                "auto_lt/" + testId + "/" + runId + "/" + filename);
+        String scenarioPath = "scenarios/" + testId + "/" + runId + "/" + safeFilename(filename);
         return new LaunchParams(
                 testId,
                 scenarioPath,
                 TextSupport.firstNonBlank(req.podName(), filename),
-                TextSupport.firstNonBlank(req.repository(), settings.getGitlabRepository(), DEFAULT_REPOSITORY),
+                TextSupport.firstNonBlank(
+                        req.repository(),
+                        connections.gitlabRepository(settings.getGitlabRepository()),
+                        DEFAULT_REPOSITORY),
                 TextSupport.firstNonBlank(req.cpu(), DEFAULT_CPU),
                 TextSupport.firstNonBlank(req.memory(), DEFAULT_MEMORY),
                 TextSupport.requireNonBlank(req.startTime(), "start_time"),
@@ -180,13 +226,30 @@ public class TestRunService {
         run.setParamsJson(json.write(params));
     }
 
+    private void markCanceled(UUID runId, Long pipelineId) {
+        TestRunEntity run = testRunRepository.findById(runId).orElse(null);
+        if (run == null || run.getStatus().isTerminal()) {
+            return;
+        }
+        run.setStatus(TestRunStatus.CANCELED);
+        run.setEndedAt(Instant.now());
+        mapper.appendEvent(run, "canceled", pipelineId == null
+                ? "Отменён до старта pipeline"
+                : "Pipeline #" + pipelineId + " отменён");
+        testRunRepository.save(run);
+        metrics.recordRunStatus(TestRunStatus.CANCELED);
+    }
+
     private void markFailed(UUID runId, RuntimeException ex) {
         TestRunEntity run = testRunRepository.findById(runId).orElse(null);
         if (run == null) {
             return;
         }
         run.setStatus(TestRunStatus.FAILED);
-        run.setErrorMessage(TextSupport.truncate(ex.getMessage(), 2000));
+        String msg = ex instanceof IllegalArgumentException && ex.getMessage() != null
+                ? ex.getMessage()
+                : "Не удалось запустить прогон";
+        run.setErrorMessage(TextSupport.truncate(msg, 2000));
         run.setEndedAt(Instant.now());
         mapper.appendEvent(run, "error", run.getErrorMessage());
         testRunRepository.save(run);
@@ -207,6 +270,19 @@ public class TestRunService {
         }
         TextSupport.requireNonBlank(req.startTime(), "start_time");
         TextSupport.requireNonBlank(req.endTime(), "end_time");
+    }
+
+    private static String safeFilename(String filename) {
+        String n = filename == null ? "scenario" : filename.replace('\\', '/');
+        int slash = n.lastIndexOf('/');
+        if (slash >= 0) {
+            n = n.substring(slash + 1);
+        }
+        n = n.replaceAll("[^a-zA-Z0-9._-]", "_");
+        if (n.isBlank() || n.contains("..")) {
+            return "scenario";
+        }
+        return n;
     }
 
     private record QueuedRun(TestRunEntity run, LaunchParams launch) {

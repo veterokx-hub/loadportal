@@ -42,8 +42,16 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         } finally {
             long ms = System.currentTimeMillis() - start;
             if (!isHealthPath(request.getRequestURI())) {
-                log.info("{} {} -> {} ({} ms)", request.getMethod(), request.getRequestURI(),
-                        response.getStatus(), ms);
+                int status = response.getStatus();
+                if (status >= 400) {
+                    log.info("{} {} -> {} ({} ms) origin={} host={} auth={}",
+                            request.getMethod(), request.getRequestURI(), status, ms,
+                            request.getHeader("Origin"), request.getHeader("Host"),
+                            request.getHeader("Authorization") != null ? "yes" : "no");
+                } else {
+                    log.info("{} {} -> {} ({} ms)", request.getMethod(), request.getRequestURI(),
+                            status, ms);
+                }
             }
             MDC.remove("run_id");
             MDC.remove("username");

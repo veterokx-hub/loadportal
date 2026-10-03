@@ -18,6 +18,7 @@ export interface Generator {
   length?: number;
   chars?: string;
   start?: number;
+  increment?: number;
   format?: string;
 }
 
@@ -111,10 +112,18 @@ export interface AutoStop {
 }
 
 export interface PrometheusConfig {
+  /** Старые поля Prometheus-listener. В .jmx больше не пишутся. */
   exporter_port: number;
   run_id: string;
   samplers_reg_exp: string;
   slo_levels: string;
+  /** Influx line protocol → VictoriaMetrics. */
+  influxdb_url: string;
+  application: string;
+  measurement: string;
+  percentiles: string;
+  summary_only: boolean;
+  influxdb_token: string;
 }
 
 export interface Scenario {

@@ -1,0 +1,377 @@
+# Каталог метрик модуля «Анализ».
+#
+# Единственное место, где зашиты имена рядов и лейблов. Под конкретный стенд
+# правится этот файл, код не трогается. Любое изменение — bump ruleset_version
+# в rules.yaml, иначе находки разных прогонов станут несравнимыми.
+#
+# Подстановка — ${name}, а не {name}: в PromQL фигурные скобки на каждом шагу.
+# Доступны ${cluster} ${namespace} ${service} ${container} ${step}
+# и готовые фрагменты селекторов ${pod} ${container_sel} ${app}.
+#
+# Метрика без expr не запрашивается — она производная (см. секцию derived).
+
+selectors:
+  # cAdvisor / kube-state: идентификация по поду.
+  pod: 'cluster="${cluster}",namespace="${namespace}",pod=~"${service}-.*"'
+  # Контейнер приложения внутри пода (исключаем istio-proxy и прочие сайдкары).
+  container_sel: 'cluster="${cluster}",namespace="${namespace}",pod=~"${service}-.*",container="${container}"'
+  # Метрики самого приложения (micrometer / prometheus client).
+  app: 'cluster="${cluster}",namespace="${namespace}",service="${service}"'
+
+metrics:
+  # ——————————————————— нагрузка и результат ———————————————————
+  - key: http.rps
+    title: Входящий RPS
+    group: load
+    unit: rps
+    importance: 3
+    expr: 'sum(rate(http_server_requests_seconds_count{${app}}[${step}]))'
+    demo: { kind: rps }
+    hint: Опорный ряд для разметки фаз. Без него фазы берутся из заявленного профиля.
+
+  - key: http.rt.p99
+    title: Время ответа p99
+    group: http
+    unit: seconds
+    importance: 3
+    expr: 'histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{${app}}[${step}])) by (le))'
+    demo: { base: 0.28, noise_pct: 8, follows: rps, follow_gain: 0.35 }
+
+  - key: http.rt.p90
+    title: Время ответа p90
+    group: http
+    unit: seconds
+    importance: 3
+    expr: 'histogram_quantile(0.90, sum(rate(http_server_requests_seconds_bucket{${app}}[${step}])) by (le))'
+    demo: { base: 0.12, noise_pct: 6, follows: rps, follow_gain: 0.2 }
+
+  - key: http.rt.p50
+    title: Время ответа медиана
+    group: http
+    unit: seconds
+    importance: 1
+    expr: 'histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{${app}}[${step}])) by (le))'
+    demo: { base: 0.045, noise_pct: 5, follows: rps, follow_gain: 0.08 }
+
+  - key: http.error_rate
+    title: Доля ошибок 5xx
+    group: http
+    unit: percent
+    importance: 3
+    expr: '100 * sum(rate(http_server_requests_seconds_count{${app},status=~"5.."}[${step}])) / clamp_min(sum(rate(http_server_requests_seconds_count{${app}}[${step}])), 1)'
+    demo: { base: 0.05, noise_pct: 40 }
+
+  # ——————————————————— ресурсы контейнера ———————————————————
+  - key: cpu.usage
+    title: Потребление CPU
+    group: resource
+    unit: cores
+    importance: 3
+    expr: 'max(sum(rate(container_cpu_usage_seconds_total{${container_sel}}[${step}])) by (pod))'
+    demo: { base: 0.9, noise_pct: 7, follows: rps, follow_gain: 0.8 }
+
+  - key: cpu.limit
+    title: Лимит CPU
+    group: resource
+    unit: cores
+    importance: 2
+    expr: 'max(kube_pod_container_resource_limits{${pod},resource="cpu"})'
+    demo: { base: 2.0, kind: static }
+
+  - key: cpu.throttled
+    title: Троттлинг CPU
+    group: resource
+    unit: percent
+    importance: 3
+    expr: '100 * max(sum(rate(container_cpu_cfs_throttled_periods_total{${container_sel}}[${step}])) by (pod) / clamp_min(sum(rate(container_cpu_cfs_periods_total{${container_sel}}[${step}])) by (pod), 1))'
+    demo: { base: 0.4, noise_pct: 60 }
+
+  - key: mem.working_set
+    title: Память (working set)
+    group: resource
+    unit: bytes
+    importance: 3
+    expr: 'max(container_memory_working_set_bytes{${container_sel}})'
+    demo: { base: 1180000000, noise_pct: 2 }
+
+  - key: mem.limit
+    title: Лимит памяти
+    group: resource
+    unit: bytes
+    importance: 2
+    expr: 'max(kube_pod_container_resource_limits{${pod},resource="memory"})'
+    demo: { base: 2147483648, kind: static }
+
+  - key: net.errors
+    title: Ошибки сети
+    group: resource
+    unit: count_per_sec
+    importance: 1
+    expr: 'sum(rate(container_network_receive_errors_total{${pod}}[${step}])) + sum(rate(container_network_transmit_errors_total{${pod}}[${step}]))'
+    demo: { base: 0.0 }
+
+  # ——————————————————— JVM ———————————————————
+  - key: jvm.gc.live_data
+    title: Живые объекты после Full GC
+    group: jvm
+    unit: bytes
+    runtime: jvm
+    importance: 3
+    expr: 'max(jvm_gc_live_data_size_bytes{${app}})'
+    demo: { base: 520000000, noise_pct: 3 }
+    hint: Главный индикатор утечки. Растёт монотонно — объекты не собираются.
+
+  - key: jvm.heap.used
+    title: Heap занято
+    group: jvm
+    unit: bytes
+    runtime: jvm
+    importance: 2
+    expr: 'max(sum(jvm_memory_used_bytes{${app},area="heap"}) by (pod))'
+    demo: { base: 900000000, noise_pct: 18 }
+
+  - key: jvm.heap.max
+    title: Heap максимум
+    group: jvm
+    unit: bytes
+    runtime: jvm
+    importance: 1
+    expr: 'max(sum(jvm_memory_max_bytes{${app},area="heap"}) by (pod))'
+    demo: { base: 1610612736, kind: static }
+
+  - key: jvm.gc.pause_share
+    title: Доля времени в GC
+    group: jvm
+    unit: percent
+    runtime: jvm
+    importance: 3
+    expr: '100 * max(sum(rate(jvm_gc_pause_seconds_sum{${app}}[${step}])) by (pod))'
+    demo: { base: 1.1, noise_pct: 20 }
+    hint: Больше 10% — приложение почти не работает, а собирает мусор.
+
+  - key: jvm.gc.pause_max
+    title: Максимальная пауза GC
+    group: jvm
+    unit: seconds
+    runtime: jvm
+    importance: 2
+    expr: 'max(jvm_gc_pause_seconds_max{${app}})'
+    demo: { base: 0.06, noise_pct: 25 }
+
+  - key: jvm.threads.live
+    title: Живые потоки JVM
+    group: jvm
+    unit: count
+    runtime: jvm
+    importance: 2
+    expr: 'max(jvm_threads_live_threads{${app}})'
+    demo: { base: 120, noise_pct: 4 }
+
+  - key: jvm.pool.busy
+    title: Занятые потоки Tomcat
+    group: jvm
+    unit: count
+    runtime: jvm
+    importance: 3
+    expr: 'max(tomcat_threads_busy_threads{${app}})'
+    demo: { base: 40, noise_pct: 12, follows: rps, follow_gain: 0.7 }
+
+  - key: jvm.pool.max
+    title: Лимит потоков Tomcat
+    group: jvm
+    unit: count
+    runtime: jvm
+    importance: 1
+    expr: 'max(tomcat_threads_config_max_threads{${app}})'
+    demo: { base: 200, kind: static }
+
+  # ——————————————————— Go ———————————————————
+  - key: go.goroutines
+    title: Горутины
+    group: go
+    unit: count
+    runtime: go
+    importance: 3
+    expr: 'max(go_goroutines{${app}})'
+    demo: { base: 340, noise_pct: 6, follows: rps, follow_gain: 0.5 }
+    hint: Монотонный рост при стабильном RPS — утечка горутин (забытый context или канал).
+
+  - key: go.heap.inuse
+    title: Go heap in-use
+    group: go
+    unit: bytes
+    runtime: go
+    importance: 3
+    expr: 'max(go_memstats_heap_inuse_bytes{${app}})'
+    demo: { base: 420000000, noise_pct: 10 }
+
+  - key: go.gc.pause_share
+    title: Доля времени в GC (Go)
+    group: go
+    unit: percent
+    runtime: go
+    importance: 2
+    expr: '100 * max(rate(go_gc_duration_seconds_sum{${app}}[${step}]))'
+    demo: { base: 0.7, noise_pct: 25 }
+
+  - key: go.threads
+    title: OS-потоки Go
+    group: go
+    unit: count
+    runtime: go
+    importance: 1
+    expr: 'max(go_threads{${app}})'
+    demo: { base: 24, noise_pct: 8 }
+
+  # ——————————————————— пул БД ———————————————————
+  - key: db.pool.active
+    title: Занятые соединения БД
+    group: db
+    unit: count
+    importance: 3
+    expr: 'max(hikaricp_connections_active{${app}})'
+    demo: { base: 6, noise_pct: 20, follows: rps, follow_gain: 0.6 }
+
+  - key: db.pool.max
+    title: Размер пула БД
+    group: db
+    unit: count
+    importance: 2
+    expr: 'max(hikaricp_connections_max{${app}})'
+    demo: { base: 20, kind: static }
+
+  - key: db.pool.pending
+    title: Ожидают соединение
+    group: db
+    unit: count
+    importance: 3
+    expr: 'max(hikaricp_connections_pending{${app}})'
+    demo: { base: 0 }
+    hint: Любое устойчивое значение больше нуля — очередь за пулом, а не медленная БД.
+
+  - key: db.pool.acquire_p99
+    title: Ожидание соединения p99
+    group: db
+    unit: seconds
+    importance: 2
+    expr: 'max(hikaricp_connections_acquire_seconds_max{${app}})'
+    demo: { base: 0.004, noise_pct: 30 }
+
+  - key: db.query.p99
+    title: Время запроса к БД p99
+    group: db
+    unit: seconds
+    importance: 2
+    expr: 'histogram_quantile(0.99, sum(rate(db_client_query_seconds_bucket{${app}}[${step}])) by (le))'
+    demo: { base: 0.02, noise_pct: 15, follows: rps, follow_gain: 0.1 }
+
+  # ——————————————————— Kafka ———————————————————
+  - key: kafka.producer.buffer_wait
+    title: Ожидание буфера продюсера
+    group: kafka
+    unit: seconds
+    importance: 2
+    expr: 'max(kafka_producer_buffer_exhausted_rate{${app}})'
+    demo: { base: 0.0 }
+
+  - key: kafka.consumer.lag
+    title: Лаг консьюмера
+    group: kafka
+    unit: count
+    importance: 2
+    expr: 'max(kafka_consumergroup_lag{cluster="${cluster}",namespace="${namespace}",consumergroup=~"${service}.*"})'
+    demo: { base: 40, noise_pct: 35 }
+
+  # ——————————————————— Redis / кэш ———————————————————
+  - key: cache.hit_ratio
+    title: Попадания в кэш
+    group: redis
+    unit: percent
+    importance: 1
+    expr: '100 * sum(rate(cache_gets_total{${app},result="hit"}[${step}])) / clamp_min(sum(rate(cache_gets_total{${app}}[${step}])), 1)'
+    demo: { base: 94, noise_pct: 2 }
+
+  # ——————————————————— платформа ———————————————————
+  - key: k8s.restarts
+    title: Рестарты контейнера
+    group: platform
+    unit: count
+    importance: 3
+    expr: 'sum(kube_pod_container_status_restarts_total{${pod}})'
+    demo: { base: 0, kind: counter }
+    hint: Рост во время теста обесценивает окно после рестарта.
+
+  - key: k8s.pods_ready
+    title: Готовые поды
+    group: platform
+    unit: count
+    importance: 3
+    expr: 'sum(kube_pod_status_ready{${pod},condition="true"})'
+    demo: { base: 4, kind: static }
+
+  - key: k8s.oom
+    title: OOMKilled
+    group: platform
+    unit: count
+    importance: 3
+    expr: 'sum(kube_pod_container_status_last_terminated_reason{${pod},reason="OOMKilled"})'
+    demo: { base: 0, kind: counter }
+
+# Производные ряды — считаются из уже загруженных, без запросов в источник.
+derived:
+  - key: derived.cpu_per_rps
+    title: CPU на единицу RPS
+    group: resource
+    unit: cores
+    importance: 2
+    formula: ratio
+    numerator: cpu.usage
+    denominator: http.rps
+    hint: Растёт при неизменном RPS — приложение стало дороже обслуживать тот же трафик.
+
+  - key: derived.tail_ratio
+    title: Разброс хвоста (p99 к медиане)
+    group: http
+    unit: ratio
+    importance: 2
+    formula: ratio
+    numerator: http.rt.p99
+    denominator: http.rt.p50
+    hint: Растёт при стабильной медиане — часть запросов встаёт в очередь.
+
+  - key: derived.cpu_saturation
+    title: Загрузка CPU от лимита
+    group: resource
+    unit: percent
+    importance: 3
+    formula: ratio_pct
+    numerator: cpu.usage
+    denominator: cpu.limit
+
+  - key: derived.mem_saturation
+    title: Память от лимита
+    group: resource
+    unit: percent
+    importance: 3
+    formula: ratio_pct
+    numerator: mem.working_set
+    denominator: mem.limit
+
+  - key: derived.pool_saturation
+    title: Загрузка пула БД
+    group: db
+    unit: percent
+    importance: 3
+    formula: ratio_pct
+    numerator: db.pool.active
+    denominator: db.pool.max
+
+  - key: derived.thread_saturation
+    title: Загрузка пула потоков
+    group: jvm
+    unit: percent
+    runtime: jvm
+    importance: 3
+    formula: ratio_pct
+    numerator: jvm.pool.busy
+    denominator: jvm.pool.max

@@ -1,19 +1,17 @@
 "use client";
 
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import { LoginScreen } from "@/components/LoginScreen";
 import { ChangePasswordScreen } from "@/components/ChangePasswordScreen";
 import { Documentation } from "@/components/Documentation";
+import { SessionsDialog } from "@/components/SessionsDialog";
 import { Settings } from "@/components/Settings";
 import { AppModulesNav } from "@/components/AppModulesNav";
+import { LogoMark } from "@/components/LogoMark";
 import { APP_MODULES, getModule } from "@/lib/modules";
 import { moduleIdFromPath } from "@/lib/routes";
-import {
-  clearMustChangePassword,
-  getSession,
-  mustChangePassword,
-  usePortal,
-} from "@/context/PortalContext";
+import { getSession, mustChangePassword, usePortal } from "@/context/PortalContext";
 
 export function PortalChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || "/";
@@ -21,30 +19,35 @@ export function PortalChrome({ children }: { children: React.ReactNode }) {
     hydrated,
     authed,
     passwordOk,
-    setPasswordOk,
     theme,
     toggleTheme,
     docsOpen,
     setDocsOpen,
     settingsOpen,
     setSettingsOpen,
+    sessionNotice,
     handleLogin,
     logout,
+    finishLocalLogout,
+    afterPasswordChanged,
     username,
     admin,
   } = usePortal();
+  const [sessionsOpen, setSessionsOpen] = useState(false);
 
   if (!hydrated) {
     return (
       <div className="boot-splash" role="status" aria-live="polite" aria-busy="true">
-        <span className="boot-splash-mark" aria-hidden />
+        <span className="boot-splash-mark" aria-hidden>
+          <LogoMark size={40} />
+        </span>
         <span className="boot-splash-text">Загрузка портала…</span>
       </div>
     );
   }
 
   if (!authed) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen onLogin={handleLogin} notice={sessionNotice} />;
   }
 
   if (mustChangePassword() && !passwordOk) {
@@ -52,10 +55,7 @@ export function PortalChrome({ children }: { children: React.ReactNode }) {
     return (
       <ChangePasswordScreen
         username={session?.username ?? ""}
-        onComplete={() => {
-          clearMustChangePassword();
-          setPasswordOk(true);
-        }}
+        onComplete={afterPasswordChanged}
         onLogout={logout}
       />
     );
@@ -69,22 +69,7 @@ export function PortalChrome({ children }: { children: React.ReactNode }) {
       <div className="topbar">
         <div className="brand">
           <span className="mark" aria-label="эмблема" role="img">
-            <svg viewBox="0 0 48 48" width="34" height="34" fill="none">
-              <circle cx="24" cy="24" r="22" stroke="var(--accent)" strokeWidth="2.6" />
-              <g fill="var(--accent)">
-                <rect x="12.5" y="28" width="3.2" height="6" rx="0.6" />
-                <rect x="17.5" y="25" width="3.2" height="9" rx="0.6" />
-                <rect x="22.5" y="22" width="3.2" height="12" rx="0.6" />
-                <rect x="27.5" y="19" width="3.2" height="15" rx="0.6" />
-              </g>
-              <path
-                d="M11 31 C 18 30, 25 27, 30 12"
-                stroke="var(--accent)"
-                strokeWidth="2.8"
-                strokeLinecap="round"
-              />
-              <path d="M30 8 l4.2 6.4 -8 1 Z" fill="var(--accent)" />
-            </svg>
+            <LogoMark size={48} />
           </span>
           <div>
             <h1>НТ · Портал</h1>
@@ -134,9 +119,21 @@ export function PortalChrome({ children }: { children: React.ReactNode }) {
           </button>
           <button
             type="button"
+            className="btn-toolbar"
+            onClick={() => setSessionsOpen(true)}
+            title="Сессии"
+            aria-label="Список сессий"
+          >
+            <span className="btn-toolbar-icon" aria-hidden>
+              ⌘
+            </span>
+            <span className="btn-toolbar-label">Сессии</span>
+          </button>
+          <button
+            type="button"
             className="btn-toolbar btn-toolbar-muted"
             onClick={logout}
-            title="Выйти"
+            title="Выйти на всех устройствах"
             aria-label="Выйти из портала"
           >
             <span className="btn-toolbar-icon" aria-hidden>
@@ -151,7 +148,24 @@ export function PortalChrome({ children }: { children: React.ReactNode }) {
 
       {/* Оверлеи без смены URL */}
       <Documentation open={docsOpen} onClose={() => setDocsOpen(false)} />
-      {admin && <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />}
+      <SessionsDialog
+        open={sessionsOpen}
+        onClose={() => setSessionsOpen(false)}
+        onLoggedOut={() => {
+          setSessionsOpen(false);
+          finishLocalLogout();
+        }}
+      />
+      {admin && (
+        <Settings
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          onForceLogout={(notice) => {
+            setSettingsOpen(false);
+            finishLocalLogout(notice);
+          }}
+        />
+      )}
 
       {children}
     </div>

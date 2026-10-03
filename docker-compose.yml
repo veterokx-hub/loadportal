@@ -1,12 +1,12 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     environment:
       POSTGRES_DB: loadtest
       POSTGRES_USER: loadtest
       POSTGRES_PASSWORD: loadtest
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -19,8 +19,9 @@ services:
     build: ./analyzer
     environment:
       APP_PORT: "8000"
+      LOADTEST_INTERNAL_TOKEN: ${LOADTEST_INTERNAL_TOKEN:-loadtest-dev-internal}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')\""]
       interval: 10s
@@ -31,10 +32,52 @@ services:
     build: ./k6-generator
     environment:
       APP_PORT: "8001"
+      LOADTEST_INTERNAL_TOKEN: ${LOADTEST_INTERNAL_TOKEN:-loadtest-dev-internal}
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8001/ready')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  gatling-generator:
+    build: ./gatling-generator
+    environment:
+      APP_PORT: "8002"
+      LOADTEST_INTERNAL_TOKEN: ${LOADTEST_INTERNAL_TOKEN:-loadtest-dev-internal}
+    ports:
+      - "127.0.0.1:8002:8002"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/ready')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  analysis:
+    build: ./analysis
+    environment:
+      APP_PORT: "8003"
+      LOADTEST_INTERNAL_TOKEN: ${LOADTEST_INTERNAL_TOKEN:-loadtest-dev-internal}
+      # Пусто = демо-режим: локальный стенд поднимается без VictoriaMetrics,
+      # но модуль остаётся кликабельным на синтетике.
+      VICTORIAMETRICS_URL: ${VICTORIAMETRICS_URL:-}
+      VICTORIAMETRICS_BEARER: ${VICTORIAMETRICS_BEARER:-}
+      ANALYSIS_VM_CONCURRENCY: ${ANALYSIS_VM_CONCURRENCY:-4}
+      ANALYSIS_VM_TIMEOUT_SEC: ${ANALYSIS_VM_TIMEOUT_SEC:-20}
+      CONSUL_ENABLED: ${CONSUL_ENABLED:-false}
+      CONSUL_HOST: ${CONSUL_HOST:-consul}
+      CONSUL_PORT: ${CONSUL_PORT:-8500}
+      CONSUL_KV_PREFIX: ${CONSUL_KV_PREFIX:-loadtest/}
+      CONSUL_HTTP_TOKEN: ${CONSUL_HTTP_TOKEN:-}
+      VAULT_ENABLED: ${VAULT_ENABLED:-false}
+      VAULT_ADDR: ${VAULT_ADDR:-}
+      VAULT_TOKEN: ${VAULT_TOKEN:-}
+      VAULT_KV_MOUNT: ${VAULT_KV_MOUNT:-secret}
+    ports:
+      - "127.0.0.1:8003:8003"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8003/ready')\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -43,8 +86,9 @@ services:
     build: ./jmeter-builder
     environment:
       APP_PORT: "8081"
+      LOADTEST_INTERNAL_TOKEN: ${LOADTEST_INTERNAL_TOKEN:-loadtest-dev-internal}
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8081'"]
       interval: 10s
@@ -61,6 +105,8 @@ services:
         condition: service_started
       k6-generator:
         condition: service_started
+      gatling-generator:
+        condition: service_started
       jmeter-builder:
         condition: service_started
     environment:
@@ -69,8 +115,20 @@ services:
       SPRING_DATASOURCE_PASSWORD: loadtest
       ANALYZER_BASE_URL: http://analyzer:8000
       K6_GENERATOR_BASE_URL: http://k6-generator:8001
+      GATLING_GENERATOR_BASE_URL: http://gatling-generator:8002
       JMETER_BUILDER_BASE_URL: http://jmeter-builder:8081
       LOADTEST_CONSUL_VAULT_CONFIG: /config/consul-vault-config.yaml
+      LOADTEST_INTERNAL_TOKEN: ${LOADTEST_INTERNAL_TOKEN:-loadtest-dev-internal}
+      VAULT_TOKEN: ${VAULT_TOKEN:-}
+      CONSUL_HTTP_TOKEN: ${CONSUL_HTTP_TOKEN:-}
+      LDAP_ENABLED: ${LDAP_ENABLED:-}
+      LDAP_URL: ${LDAP_URL:-}
+      LDAP_BASE_DN: ${LDAP_BASE_DN:-}
+      LDAP_USER_DN_PATTERN: ${LDAP_USER_DN_PATTERN:-}
+      LDAP_USER_SEARCH_BASE: ${LDAP_USER_SEARCH_BASE:-}
+      LDAP_USER_SEARCH_FILTER: ${LDAP_USER_SEARCH_FILTER:-}
+      LDAP_BIND_DN: ${LDAP_BIND_DN:-}
+      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-}
     volumes:
       - ./config/consul-vault-config.local.yaml:/config/consul-vault-config.yaml:ro
     ports:
@@ -89,14 +147,31 @@ services:
         condition: service_healthy
       constructor:
         condition: service_started
+      analysis:
+        condition: service_started
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/loadtest
       SPRING_DATASOURCE_USERNAME: loadtest
       SPRING_DATASOURCE_PASSWORD: loadtest
       LOADTEST_CONSUL_VAULT_CONFIG: /config/consul-vault-config.yaml
+      LOADTEST_INTERNAL_TOKEN: ${LOADTEST_INTERNAL_TOKEN:-loadtest-dev-internal}
+      VAULT_TOKEN: ${VAULT_TOKEN:-}
+      CONSUL_HTTP_TOKEN: ${CONSUL_HTTP_TOKEN:-}
+      ANALYSIS_BASE_URL: http://analysis:8003
+      GITLAB_BASE_URL: ${GITLAB_BASE_URL:-}
+      GITLAB_PROJECT_ID: ${GITLAB_PROJECT_ID:-}
+      GITLAB_REPOSITORY: ${GITLAB_REPOSITORY:-}
+      GITLAB_REF: ${GITLAB_REF:-}
       GITLAB_TRIGGER_TOKEN: ${GITLAB_TRIGGER_TOKEN:-}
-      GITLAB_UPLOAD_TOKEN: ${GITLAB_UPLOAD_TOKEN:-}
       GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-}
+      GITLAB_API_TOKEN: ${GITLAB_API_TOKEN:-}
+      GITLAB_UPLOAD_TOKEN: ${GITLAB_UPLOAD_TOKEN:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
     volumes:
       - ./config/consul-vault-config.local.yaml:/config/consul-vault-config.yaml:ro
     ports:

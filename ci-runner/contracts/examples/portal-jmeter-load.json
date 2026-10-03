@@ -1,0 +1,43 @@
+{
+  "contract_version": 1,
+  "run": {
+    "tool": "jmeter",
+    "trigger": "portal",
+    "profile": "load",
+    "portal_run_id": "3f2b1c44-9a7e-4d21-8b55-0e1c9a7f2d30",
+    "jira": "NT-1234",
+    "name": "UMP · профиль дня"
+  },
+  "scenario": {
+    "source": "git",
+    "path": "scenarios/NT-1234/3f2b1c44/scenario.jmx",
+    "checksum": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "target": {
+    "repository": "lt-ump",
+    "base_url": "https://ump.test.corp.local",
+    "environment": "test"
+  },
+  "resources": {
+    "cpu": "4",
+    "memory": "8Gi",
+    "replicas": 1
+  },
+  "schedule": {
+    "start": "2026-09-11T10:00:00+03:00",
+    "end": "2026-09-11T11:30:00+03:00"
+  },
+  "sla": {
+    "p95_ms": 500,
+    "p99_ms": 1200,
+    "error_rate_pct": 1.0
+  },
+  "telemetry": {
+    "run_label": "NT-1234-3f2b1c44",
+    "dashboard_uid": "lt-jmeter-main"
+  },
+  "meta": {
+    "requested_by": "nvkhakimov",
+    "release_version": "2026.09.1"
+  }
+}

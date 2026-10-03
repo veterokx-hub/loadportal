@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { RequestModel, Scenario } from "@/lib/types";
 import { paramsFromTemplates, urlTemplate } from "@/lib/request-params";
 
@@ -30,6 +30,30 @@ export function Step2Requests({
   const [newMethod, setNewMethod] = useState("GET");
   const [newPath, setNewPath] = useState("/");
   const [newName, setNewName] = useState("");
+  const scenarioRef = useRef(scenario);
+  scenarioRef.current = scenario;
+  const paramTimers = useRef<Record<string, number>>({});
+
+  function syncParams(id: string) {
+    const r = scenarioRef.current.requests.find((x) => x.id === id);
+    if (!r) return;
+    const next = paramsFromTemplates(
+      urlTemplate(r),
+      r.body?.content ?? "",
+      r.params
+    );
+    patch(id, { params: next });
+  }
+
+  function scheduleParamSync(id: string) {
+    window.clearTimeout(paramTimers.current[id]);
+    paramTimers.current[id] = window.setTimeout(() => syncParams(id), 450);
+  }
+
+  function flushParamSync(id: string) {
+    window.clearTimeout(paramTimers.current[id]);
+    syncParams(id);
+  }
 
   function addRequest() {
     const path = newPath.trim() || "/";
@@ -124,31 +148,21 @@ export function Step2Requests({
                   style={{ marginTop: 4, fontFamily: "monospace", fontSize: 12 }}
                   value={r.path}
                   placeholder="/path/{id}"
-                  onChange={(e) =>
-                    patch(r.id, {
-                      path: e.target.value,
-                      params: paramsFromTemplates(
-                        urlTemplate({ path: e.target.value, url: r.url }),
-                        r.body?.content ?? "",
-                        r.params
-                      ),
-                    })
-                  }
+                  onChange={(e) => {
+                    patch(r.id, { path: e.target.value });
+                    scheduleParamSync(r.id);
+                  }}
+                  onBlur={() => flushParamSync(r.id)}
                 />
                 <input
                   style={{ marginTop: 4, fontFamily: "monospace", fontSize: 12 }}
                   value={r.url ?? ""}
                   placeholder="Собственный URL: https://other-host.com/api/{id} (необязательно)"
-                  onChange={(e) =>
-                    patch(r.id, {
-                      url: e.target.value || null,
-                      params: paramsFromTemplates(
-                        urlTemplate({ path: r.path, url: e.target.value }),
-                        r.body?.content ?? "",
-                        r.params
-                      ),
-                    })
-                  }
+                  onChange={(e) => {
+                    patch(r.id, { url: e.target.value || null });
+                    scheduleParamSync(r.id);
+                  }}
+                  onBlur={() => flushParamSync(r.id)}
                 />
                 <div className="hint">
                   Параметры в <code>{"{...}"}</code> распознаются автоматически. Собственный URL

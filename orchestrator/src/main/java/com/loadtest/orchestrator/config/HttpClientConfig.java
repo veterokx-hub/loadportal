@@ -1,5 +1,6 @@
 package com.loadtest.orchestrator.config;
 
+import com.loadtest.orchestrator.secrets.SecretResolver;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -42,6 +43,29 @@ public class HttpClientConfig {
         return builder.clone()
                 .requestFactory(requestFactory(connectTimeoutMs, readTimeoutMs))
                 .build();
+    }
+
+    /**
+     * Клиент для вызовов соседних модулей портала: добавляет общий внутренний токен,
+     * чтобы каждый вызывающий класс не проставлял заголовок вручную и не забывал его.
+     * Read-таймаут больше рабочего: анализ длинного теста ходит в источник метрик
+     * десятки раз и укладывается в минуты, а не в секунды.
+     */
+    @Bean
+    public RestClient internalRestClient(
+            RestClient.Builder builder,
+            SecretResolver secrets,
+            @Value("${loadtest.internal-token:}") String internalToken,
+            @Value("${loadtest.http.connect-timeout-ms:5000}") long connectTimeoutMs,
+            @Value("${loadtest.http.internal-read-timeout-ms:180000}") long readTimeoutMs) {
+        String token = secrets.resolve("loadtest/internal-token")
+                .orElse(internalToken == null ? "" : internalToken.trim());
+        RestClient.Builder configured = builder.clone()
+                .requestFactory(requestFactory(connectTimeoutMs, readTimeoutMs));
+        if (!token.isBlank()) {
+            configured = configured.defaultHeader("X-Internal-Token", token);
+        }
+        return configured.build();
     }
 
     /**

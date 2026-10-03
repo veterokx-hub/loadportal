@@ -2,6 +2,7 @@ package com.loadtest.orchestrator.service;
 
 import com.loadtest.orchestrator.client.GitLabClient;
 import com.loadtest.orchestrator.client.GitLabException;
+import com.loadtest.orchestrator.config.ExternalConnections;
 import com.loadtest.orchestrator.persistence.PortalSettingsEntity;
 import com.loadtest.orchestrator.secrets.SecretResolver;
 import com.loadtest.orchestrator.web.dto.GitLabRunDefaultsDto;
@@ -24,14 +25,17 @@ public class GitLabSettingsService {
     private final PortalSettingsService portalSettingsService;
     private final GitLabClient gitLabClient;
     private final SecretResolver secretResolver;
+    private final ExternalConnections connections;
 
     public GitLabSettingsService(
             PortalSettingsService portalSettingsService,
             GitLabClient gitLabClient,
-            SecretResolver secretResolver) {
+            SecretResolver secretResolver,
+            ExternalConnections connections) {
         this.portalSettingsService = portalSettingsService;
         this.gitLabClient = gitLabClient;
         this.secretResolver = secretResolver;
+        this.connections = connections;
     }
 
     public GitLabSettingsDto getGitLab() {
@@ -40,11 +44,13 @@ public class GitLabSettingsService {
 
     public GitLabRunDefaultsDto getRunDefaults() {
         PortalSettingsEntity settings = portalSettingsService.loadEntity();
-        String repo = TextSupport.firstNonBlank(settings.getGitlabRepository(), DEFAULT_REPOSITORY);
-        boolean configured = hasText(settings.getGitlabBaseUrl())
-                && hasText(settings.getGitlabProjectId())
+        String repo = TextSupport.firstNonBlank(
+                connections.gitlabRepository(settings.getGitlabRepository()),
+                DEFAULT_REPOSITORY);
+        boolean configured = hasText(connections.gitlabBaseUrl(settings.getGitlabBaseUrl()))
+                && hasText(connections.gitlabProjectId(settings.getGitlabProjectId()))
                 && resolveTriggerToken(settings).isPresent()
-                && resolveUploadToken(settings).isPresent();
+                && connections.s3Ready();
         return new GitLabRunDefaultsDto(repo, configured);
     }
 
@@ -55,13 +61,13 @@ public class GitLabSettingsService {
         entity.setGitlabProjectId(TextSupport.nullToEmpty(dto.gitlabProjectId()));
         entity.setGitlabRepository(TextSupport.firstNonBlank(dto.gitlabRepository(), DEFAULT_REPOSITORY));
         entity.setGitlabTriggerRef("master");
-        if (dto.gitlabTriggerToken() != null) {
+        if (isPlainSecret(dto.gitlabTriggerToken())) {
             entity.setGitlabTriggerToken(dto.gitlabTriggerToken().trim());
         }
-        if (dto.gitlabUploadToken() != null) {
+        if (isPlainSecret(dto.gitlabUploadToken())) {
             entity.setGitlabUploadToken(dto.gitlabUploadToken().trim());
         }
-        if (dto.gitlabWebhookSecret() != null) {
+        if (isPlainSecret(dto.gitlabWebhookSecret())) {
             entity.setGitlabWebhookSecret(dto.gitlabWebhookSecret().trim());
         }
         entity.setGrafanaBaseUrl(TextSupport.nullToEmpty(dto.grafanaBaseUrl()));
@@ -72,32 +78,34 @@ public class GitLabSettingsService {
 
     public GitLabTestConnectionResult testConnection() {
         PortalSettingsEntity settings = portalSettingsService.loadEntity();
-        if (!hasText(settings.getGitlabBaseUrl())) {
+        String baseUrl = connections.gitlabBaseUrl(settings.getGitlabBaseUrl());
+        String projectId = connections.gitlabProjectId(settings.getGitlabProjectId());
+        if (!hasText(baseUrl)) {
             return failure("Укажите GitLab base URL");
         }
-        if (!hasText(settings.getGitlabProjectId())) {
+        if (!hasText(projectId)) {
             return failure("Укажите Project ID или path");
         }
 
-        Optional<String> token = resolveUploadToken(settings).or(() -> resolveTriggerToken(settings));
-        if (token.isEmpty()) {
-            String msg = "Задайте upload/trigger token в настройках, Vault или env "
-                    + "(GITLAB_UPLOAD_TOKEN / GITLAB_TRIGGER_TOKEN)";
-            log.warn("GitLab connection test failed: {}", msg);
-            return failure(msg);
-        }
-
+        Optional<String> readToken = connections.gitlabApiToken().or(() -> resolveUploadToken(settings));
         try {
-            GitLabClient.ProjectInfo project = gitLabClient.getProject(
-                    settings.getGitlabBaseUrl(),
-                    token.get(),
-                    settings.getGitlabProjectId());
-            log.info("GitLab connection test ok project={}", project.pathWithNamespace());
+            if (readToken.isPresent()) {
+                GitLabClient.ProjectInfo project = gitLabClient.getProject(baseUrl, readToken.get(), projectId);
+                log.info("GitLab connection test ok project={}", project.pathWithNamespace());
+                return new GitLabTestConnectionResult(
+                        true,
+                        "Соединение с GitLab успешно",
+                        project.id(),
+                        project.pathWithNamespace());
+            }
+            String version = gitLabClient.version(baseUrl);
+            log.info("GitLab version check ok version={}", version);
             return new GitLabTestConnectionResult(
                     true,
-                    "Соединение с GitLab успешно",
-                    project.id(),
-                    project.pathWithNamespace());
+                    "GitLab доступен" + (version.isBlank() ? "" : " (" + version + ")")
+                            + ". Проект не проверялся: нет API-токена (GITLAB_API_TOKEN)",
+                    null,
+                    null);
         } catch (GitLabException | IllegalArgumentException ex) {
             log.warn("GitLab connection test failed: {}", ex.getMessage());
             return failure(ex.getMessage());
@@ -105,8 +113,7 @@ public class GitLabSettingsService {
     }
 
     /**
-     * Приоритет: значение в БД → Vault (path) → env (через {@link SecretResolver}).
-     * В перспективе токены живут только в Vault; БД/UI — временный fallback.
+     * Приоритет: Vault → env → значение в БД.
      */
     public Optional<String> resolveTriggerToken(PortalSettingsEntity settings) {
         return resolveSecret(
@@ -131,15 +138,16 @@ public class GitLabSettingsService {
     }
 
     private Optional<String> resolveSecret(String stored, String vaultPath, String envName) {
+        Optional<String> external = secretResolver.resolve(vaultPath);
+        if (external.isPresent()) {
+            return external;
+        }
+        Optional<String> fromEnvName = secretResolver.resolve(envName);
+        if (fromEnvName.isPresent()) {
+            return fromEnvName;
+        }
         String value = TextSupport.nullToEmpty(stored).trim();
-        if (!value.isEmpty()) {
-            return Optional.of(value);
-        }
-        Optional<String> fromVaultOrEnv = secretResolver.resolve(vaultPath);
-        if (fromVaultOrEnv.isPresent()) {
-            return fromVaultOrEnv;
-        }
-        return secretResolver.resolve(envName);
+        return value.isEmpty() ? Optional.empty() : Optional.of(value);
     }
 
     private static GitLabSettingsDto toDto(PortalSettingsEntity entity) {
@@ -147,15 +155,33 @@ public class GitLabSettingsService {
                 entity.getGitlabBaseUrl(),
                 entity.getGitlabProjectId(),
                 entity.getGitlabRepository(),
-                entity.getGitlabTriggerToken(),
-                entity.getGitlabUploadToken(),
-                entity.getGitlabWebhookSecret(),
+                maskSecret(entity.getGitlabTriggerToken()),
+                maskSecret(entity.getGitlabUploadToken()),
+                maskSecret(entity.getGitlabWebhookSecret()),
                 entity.getGrafanaBaseUrl(),
                 entity.getGrafanaDashboardTemplate());
     }
 
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private static String maskSecret(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        if (value.length() <= 4) {
+            return "****";
+        }
+        return "****" + value.substring(value.length() - 4);
+    }
+
+    private static boolean isPlainSecret(String value) {
+        if (value == null) {
+            return false;
+        }
+        String v = value.trim();
+        return !v.isEmpty() && !v.startsWith("****") && !v.startsWith("••");
     }
 
     private static GitLabTestConnectionResult failure(String message) {

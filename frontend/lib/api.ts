@@ -1,4 +1,5 @@
 import type { Scenario, SourceType } from "./types";
+import type { Engine } from "./engines";
 import type { AuthSession, UserRole } from "./auth";
 import { authHeaders, clearSession } from "./auth";
 
@@ -46,44 +47,25 @@ export interface PortalUser {
   ldap_only: boolean;
 }
 
-export interface LdapSettings {
-  ldap_enabled: boolean;
-  ldap_url: string;
-  ldap_base_dn: string;
-  ldap_user_dn_pattern: string;
-  ldap_user_search_base: string;
-  ldap_user_search_filter: string;
-  ldap_bind_dn: string;
-  ldap_bind_password: string;
-}
-
-export interface GitLabSettings {
-  gitlab_base_url: string;
-  gitlab_project_id: string;
-  gitlab_repository: string;
-  gitlab_trigger_token: string;
-  gitlab_upload_token: string;
-  gitlab_webhook_secret: string;
-  grafana_base_url: string;
-  grafana_dashboard_template: string;
-}
-
 export interface GitLabRunDefaults {
   gitlab_repository: string;
   configured: boolean;
-}
-
-export interface GitLabTestResult {
-  ok: boolean;
-  message: string;
-  project_id?: number | null;
-  project_path?: string | null;
 }
 
 export interface TestRunEvent {
   at: string;
   event: string;
   detail: string;
+}
+
+export interface RunVerdict {
+  status: string;
+  samples?: number | null;
+  p95_ms?: number | null;
+  p99_ms?: number | null;
+  error_rate_pct?: number | null;
+  rps?: number | null;
+  reasons?: string[];
 }
 
 export interface TestRun {
@@ -95,6 +77,11 @@ export interface TestRun {
   build_id?: string | null;
   script_id?: string | null;
   target_url: string;
+  /** Идентификация сервиса в кластере — вход модуля «Анализ». */
+  target_cluster?: string;
+  target_namespace?: string;
+  target_service?: string;
+  target_container?: string;
   params: Record<string, unknown>;
   labels: Record<string, string>;
   status: string;
@@ -106,6 +93,7 @@ export interface TestRun {
   error_message?: string;
   created_at: string;
   events: TestRunEvent[];
+  verdict?: RunVerdict | null;
 }
 
 export interface CreateTestRunBody {
@@ -122,6 +110,10 @@ export interface CreateTestRunBody {
   scenario_path?: string;
   pod_name?: string;
   repository?: string;
+  target_cluster?: string;
+  target_namespace?: string;
+  target_service?: string;
+  target_container?: string;
   params?: Record<string, unknown>;
   labels?: Record<string, string>;
 }
@@ -198,6 +190,45 @@ export async function logoutApi(): Promise<void> {
   }).catch(() => {});
 }
 
+export interface AuthSessionInfo {
+  id: string;
+  created_at: string;
+  expires_at: string;
+  current: boolean;
+}
+
+export async function listSessions(): Promise<AuthSessionInfo[]> {
+  const res = await fetch(`${BASE}/api/auth/sessions`, {
+    headers: { ...authHeaders() },
+  });
+  await ensureOk(res);
+  return res.json();
+}
+
+export async function revokeSession(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/auth/sessions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  await ensureOk(res);
+}
+
+export async function logoutAllApi(): Promise<void> {
+  await fetch(`${BASE}/api/auth/logout-all`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+  }).catch(() => {});
+}
+
+export async function setUserPassword(username: string, password: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/users/${encodeURIComponent(username)}/password`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ password }),
+  });
+  await ensureOk(res);
+}
+
 export async function analyze(input: AnalyzeInput): Promise<Scenario> {
   const res = await fetch(`${BASE}/api/analyze`, {
     method: "POST",
@@ -215,7 +246,7 @@ export interface BuildResult {
 
 export async function saveBuild(
   scenario: Scenario,
-  engine: "jmeter" | "k6"
+  engine: Engine
 ): Promise<BuildSaveResult> {
   const res = await fetch(`${BASE}/api/builds/save`, {
     method: "POST",
@@ -226,23 +257,31 @@ export async function saveBuild(
   return res.json();
 }
 
-/**
- * Разовая генерация без записи в историю сборок (POST /api/build или /api/build/k6).
- */
+/** Разовая генерация без записи в историю сборок (POST /api/build[/k6|/gatling]). */
+const BUILD_PATH: Record<Engine, string> = {
+  jmeter: "/api/build",
+  k6: "/api/build/k6",
+  gatling: "/api/build/gatling",
+};
+
+const BUILD_FALLBACK_FILENAME: Record<Engine, string> = {
+  jmeter: "scenario.jmx",
+  k6: "scenario.zip",
+  gatling: "scenario.zip",
+};
+
 export async function generateScript(
   scenario: Scenario,
-  engine: "jmeter" | "k6"
+  engine: Engine
 ): Promise<BuildResult> {
-  const path = engine === "k6" ? "/api/build/k6" : "/api/build";
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${BASE}${BUILD_PATH[engine]}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(scenario),
   });
   await ensureOk(res);
   const fromHeader = filenameFromContentDisposition(res.headers.get("Content-Disposition"));
-  const fallback = engine === "k6" ? "scenario.js" : "scenario.jmx";
-  return { blob: await res.blob(), filename: fromHeader || fallback };
+  return { blob: await res.blob(), filename: fromHeader || BUILD_FALLBACK_FILENAME[engine] };
 }
 
 export async function listScripts(): Promise<ScriptSummary[]> {
@@ -354,49 +393,32 @@ export async function deleteUser(username: string): Promise<void> {
   await ensureOk(res);
 }
 
-export async function getLdapSettings(): Promise<LdapSettings> {
-  const res = await fetch(`${BASE}/api/settings/ldap`, { headers: { ...authHeaders() } });
-  await ensureOk(res);
-  return res.json();
-}
-
-export async function saveLdapSettings(body: LdapSettings): Promise<LdapSettings> {
-  const res = await fetch(`${BASE}/api/settings/ldap`, {
+export async function setUserRole(username: string, role: UserRole): Promise<PortalUser> {
+  const res = await fetch(`${BASE}/api/users/${encodeURIComponent(username)}/role`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ role }),
   });
   await ensureOk(res);
   return res.json();
 }
 
-export async function getGitLabSettings(): Promise<GitLabSettings> {
-  const res = await fetch(`${BASE}/api/settings/gitlab`, { headers: { ...authHeaders() } });
+export interface AuditEvent {
+  id: string;
+  created_at: string;
+  username: string;
+  action: string;
+  detail: string;
+}
+
+export async function listAuditEvents(): Promise<AuditEvent[]> {
+  const res = await fetch(`${BASE}/api/audit`, { headers: { ...authHeaders() } });
   await ensureOk(res);
   return res.json();
 }
 
 export async function getGitLabRunDefaults(): Promise<GitLabRunDefaults> {
   const res = await fetch(`${BASE}/api/settings/gitlab/defaults`, {
-    headers: { ...authHeaders() },
-  });
-  await ensureOk(res);
-  return res.json();
-}
-
-export async function saveGitLabSettings(body: GitLabSettings): Promise<GitLabSettings> {
-  const res = await fetch(`${BASE}/api/settings/gitlab`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(body),
-  });
-  await ensureOk(res);
-  return res.json();
-}
-
-export async function testGitLabConnection(): Promise<GitLabTestResult> {
-  const res = await fetch(`${BASE}/api/settings/gitlab/test`, {
-    method: "POST",
     headers: { ...authHeaders() },
   });
   await ensureOk(res);
@@ -415,6 +437,15 @@ export async function getRun(id: string): Promise<TestRun> {
   return res.json();
 }
 
+export async function cancelRun(id: string): Promise<TestRun> {
+  const res = await fetch(`${BASE}/api/runs/${id}/cancel`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+  });
+  await ensureOk(res);
+  return res.json();
+}
+
 export async function createRun(body: CreateTestRunBody): Promise<TestRun> {
   const res = await fetch(`${BASE}/api/runs`, {
     method: "POST",
@@ -423,6 +454,17 @@ export async function createRun(body: CreateTestRunBody): Promise<TestRun> {
   });
   await ensureOk(res);
   return res.json();
+}
+
+/**
+ * Обёртка для новых вызовов: единая обработка 401 и текста ошибки.
+ * Пустой ответ (204 / DELETE) отдаётся как undefined — вызывающий типизирует его void.
+ */
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, init);
+  await ensureOk(res);
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 async function errorText(res: Response): Promise<string> {

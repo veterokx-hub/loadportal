@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState, type FormEvent } from "react";
+import { LogoMark } from "@/components/LogoMark";
 
 export function ChangePasswordScreen({
   username,
@@ -63,15 +64,7 @@ export function ChangePasswordScreen({
       >
         <div className="login-brand">
           <span className="login-mark" aria-hidden>
-            <svg viewBox="0 0 48 48" width="28" height="28" fill="none">
-              <circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="2.4" />
-              <path
-                d="M16 24h16M24 16v16"
-                stroke="currentColor"
-                strokeWidth="2.6"
-                strokeLinecap="round"
-              />
-            </svg>
+            <LogoMark size={48} />
           </span>
           <div>
             <p className="login-kicker">Безопасность</p>
@@ -80,7 +73,8 @@ export function ChangePasswordScreen({
         </div>
 
         <p className="login-lead">
-          Пользователь <code>{username}</code> — задайте новый пароль перед работой в портале.
+          Пользователь <code>{username}</code> — задайте новый пароль. После сохранения
+          все сессии будут сброшены, войдите снова.
         </p>
 
         <div className="field">
@@ -136,7 +130,7 @@ export function ChangePasswordScreen({
           disabled={busy}
         >
           {busy && <span className="btn-spinner" aria-hidden />}
-          <span className="btn-label">{busy ? "Сохранение…" : "Сохранить и продолжить"}</span>
+          <span className="btn-label">{busy ? "Сохранение…" : "Сохранить и войти снова"}</span>
         </button>
         <button
           type="button"

@@ -1,4 +1,24 @@
-import type { Intensity, LoadConfig } from "./types";
+import type { Intensity, LoadConfig, RequestModel } from "./types";
+
+/** HTTP-сэмплов за одну итерацию группы (сумма repeat). */
+export function samplesPerIteration(requests: Pick<RequestModel, "repeat">[]): number {
+  return Math.max(
+    1,
+    requests.reduce((n, r) => n + Math.max(1, r.repeat), 0)
+  );
+}
+
+/** k6 arrival-rate: старты exec/с, чтобы суммарный HTTP RPS = target. */
+export function arrivalRate(httpRps: number, samples: number): number {
+  const http = Math.max(0, httpRps);
+  const n = Math.max(1, samples);
+  return n === 1 ? http : http / n;
+}
+
+/** Доля HTTP RPS запроса внутри группы (как TST: пропорционально repeat). */
+export function requestShareRps(groupHttpRps: number, repeat: number, samples: number): number {
+  return samples > 0 ? (Math.max(0, groupHttpRps) * Math.max(1, repeat)) / samples : 0;
+}
 
 export interface ProfilePoint {
   t: number; // сек

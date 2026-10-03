@@ -1,0 +1,42 @@
+# Runner сборки образов. Тот же namespace lt-control, отдельный тег lt-images.
+# Kaniko собирает слои от root и без dropped capabilities: uid 10001, которым
+# работает lt-control, снапшот слоёв не пишет. Привилегированный режим не нужен.
+# PSA namespace — baseline, root-контейнер без privileged ей не противоречит.
+# Ноды те же, что у управляющих джоб (lt.corp/pool=control), не пул генераторов.
+
+concurrent = 4
+
+[[runners]]
+  name = "lt-images"
+  url = "https://gitlab.corp.example"
+  executor = "kubernetes"
+  limit = 4
+  [runners.kubernetes]
+    namespace = "lt-control"
+    service_account = "lt-control"
+    poll_timeout = 300
+    privileged = false
+    allow_privilege_escalation = false
+    pull_policy = ["if-not-present"]
+    allowed_pull_policies = ["if-not-present"]
+    image_pull_secrets = ["registry-lt"]
+    allowed_images = ["registry.corp.example/proxy/kaniko*", "registry.corp.example/proxy/trivy*", "registry.corp.example/proxy/cosign*"]
+    allowed_services = []
+
+    cpu_request = "1"
+    cpu_limit = "1"
+    memory_request = "2Gi"
+    memory_limit = "2Gi"
+    cpu_request_overwrite_max_allowed = "4"
+    cpu_limit_overwrite_max_allowed = "4"
+    memory_request_overwrite_max_allowed = "8Gi"
+    memory_limit_overwrite_max_allowed = "8Gi"
+
+    [runners.kubernetes.node_selector]
+      "lt.corp/pool" = "control"
+
+    [runners.kubernetes.pod_security_context]
+      run_as_non_root = false
+      run_as_user = 0
+      run_as_group = 0
+      fs_group = 0

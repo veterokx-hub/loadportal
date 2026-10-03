@@ -1,5 +1,6 @@
 package com.loadtest.orchestrator.service;
 
+import com.loadtest.orchestrator.config.ConsulKv;
 import com.loadtest.orchestrator.metrics.PortalMetrics;
 import com.loadtest.orchestrator.model.TestRunStatus;
 import com.loadtest.orchestrator.persistence.TestRunEntity;
@@ -7,6 +8,8 @@ import com.loadtest.orchestrator.persistence.TestRunRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import tools.jackson.databind.JsonNode;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,33 +17,47 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 /** Обработка GitLab webhook и проверка секрета (отдельно от создания прогона). */
 @Service
 public class TestRunWebhookService {
 
     private static final Logger log = LoggerFactory.getLogger(TestRunWebhookService.class);
+    private static final Set<String> VERDICTS = Set.of("passed", "failed", "invalid");
 
     private final TestRunRepository testRunRepository;
     private final PortalSettingsService portalSettingsService;
     private final GitLabSettingsService gitLabSettingsService;
     private final TestRunMapper mapper;
     private final PortalMetrics metrics;
+    private final AnalysisService analysisService;
+    private final ConsulKv consul;
+    private final boolean autoAnalyzeDefault;
 
     public TestRunWebhookService(
             TestRunRepository testRunRepository,
             PortalSettingsService portalSettingsService,
             GitLabSettingsService gitLabSettingsService,
             TestRunMapper mapper,
-            PortalMetrics metrics) {
+            PortalMetrics metrics,
+            AnalysisService analysisService,
+            ConsulKv consul,
+            @Value("${loadtest.analysis.auto-on-finish:true}") boolean autoAnalyze) {
         this.testRunRepository = testRunRepository;
         this.portalSettingsService = portalSettingsService;
         this.gitLabSettingsService = gitLabSettingsService;
         this.mapper = mapper;
         this.metrics = metrics;
+        this.analysisService = analysisService;
+        this.consul = consul;
+        this.autoAnalyzeDefault = autoAnalyze;
     }
 
     public boolean verifySecret(String providedSecret) {
@@ -65,6 +82,10 @@ public class TestRunWebhookService {
         TestRunEntity run = found.get();
         MDC.put("run_id", run.getId().toString());
         try {
+            if (run.getStatus() == TestRunStatus.CANCELED) {
+                metrics.recordGitLabWebhook("canceled_kept");
+                return;
+            }
             if (pipelineId != null && run.getGitlabPipelineId() == null) {
                 run.setGitlabPipelineId(pipelineId);
             }
@@ -79,9 +100,87 @@ public class TestRunWebhookService {
             testRunRepository.save(run);
             metrics.recordRunStatus(newStatus);
             metrics.recordGitLabWebhook("accepted");
+            // Тест закончился — самое время посмотреть, что происходило с сервисом.
+            // Сама задача уйдёт в работу после коммита этой транзакции.
+            if (autoOnFinish() && newStatus.isTerminal()) {
+                analysisService.autoAnalyze(run);
+            }
         } finally {
             MDC.remove("run_id");
         }
+    }
+
+    /**
+     * Вердикт gate. Статус пайплайна GitLab не отличает failed от invalid:
+     * оба роняют джобу. Сюда publish кладёт точный статус и метрики.
+     *
+     * @return {@code ok} или {@code ignored} (прогон уже отменён)
+     */
+    @Transactional
+    public String applyVerdict(JsonNode body) {
+        String rawId = body.path("portal_run_id").asText("");
+        String verdict = body.path("status").asText("");
+        UUID runId = parseRunId(rawId);
+        if (!VERDICTS.contains(verdict)) {
+            throw new IllegalArgumentException("неизвестный статус вердикта");
+        }
+        TestRunEntity run = testRunRepository.findById(runId).orElseThrow(
+                () -> new IllegalArgumentException("прогон не найден"));
+        MDC.put("run_id", run.getId().toString());
+        try {
+            if (run.getStatus() == TestRunStatus.CANCELED) {
+                metrics.recordGitLabWebhook("verdict_ignored");
+                return "ignored";
+            }
+            String json = body.toString();
+            if (verdict.equals(run.getVerdictStatus()) && json.equals(run.getVerdictJson())) {
+                metrics.recordGitLabWebhook("verdict");
+                return "ok";
+            }
+            String reasons = reasonsOf(body);
+            run.setVerdictStatus(verdict);
+            run.setVerdictJson(json);
+            TestRunStatus pipelineStatus = "passed".equals(verdict)
+                    ? TestRunStatus.SUCCEEDED
+                    : TestRunStatus.FAILED;
+            applyStatusTransition(run, pipelineStatus, run.getGitlabWebUrl());
+            if ("passed".equals(verdict)) {
+                run.setErrorMessage("");
+            } else {
+                String message = reasons.isBlank()
+                        ? ("invalid".equals(verdict) ? "прогон невалиден" : "SLA не пройден")
+                        : reasons;
+                run.setErrorMessage(TextSupport.truncate(message, 2000));
+            }
+            mapper.appendEvent(run, "verdict", verdict + (reasons.isBlank() ? "" : ": " + reasons));
+            testRunRepository.save(run);
+            metrics.recordRunStatus(pipelineStatus);
+            metrics.recordGitLabWebhook("verdict");
+            return "ok";
+        } finally {
+            MDC.remove("run_id");
+        }
+    }
+
+    private static UUID parseRunId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalArgumentException("в вердикте нет portal_run_id");
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException("portal_run_id не UUID");
+        }
+    }
+
+    private static String reasonsOf(JsonNode body) {
+        if (!body.path("reasons").isArray()) {
+            return "";
+        }
+        return StreamSupport.stream(body.path("reasons").spliterator(), false)
+                .map(JsonNode::asText)
+                .filter(text -> !text.isBlank())
+                .collect(Collectors.joining("; "));
     }
 
     /**
@@ -104,10 +203,20 @@ public class TestRunWebhookService {
         }
         TestRunEntity run = byHint.get();
         Long stored = run.getGitlabPipelineId();
-        if (stored != null && pipelineId != null && !stored.equals(pipelineId)) {
-            log.warn(
-                    "Webhook rejected: PORTAL_RUN_ID={} bound to pipeline {} but event has {}",
-                    runIdHint, stored, pipelineId);
+        if (stored != null) {
+            if (pipelineId == null || !stored.equals(pipelineId)) {
+                log.warn(
+                        "Webhook rejected: PORTAL_RUN_ID={} bound to pipeline {} but event has {}",
+                        runIdHint, stored, pipelineId);
+                return Optional.empty();
+            }
+            return byHint;
+        }
+        if (run.getStatus() != TestRunStatus.QUEUED) {
+            return Optional.empty();
+        }
+        if (run.getCreatedAt() != null
+                && run.getCreatedAt().isBefore(Instant.now().minus(15, ChronoUnit.MINUTES))) {
             return Optional.empty();
         }
         return byHint;
@@ -125,6 +234,19 @@ public class TestRunWebhookService {
             run.setEndedAt(Instant.now());
             run.setGrafanaUrl(mapper.buildGrafanaUrl(portalSettingsService.loadEntity(), run));
         }
+    }
+
+    /** Consul `analysis/auto-on-finish`, иначе ConfigMap / LOADTEST_ANALYSIS_AUTO. */
+    private boolean autoOnFinish() {
+        return consul.get("analysis/auto-on-finish")
+                .filter(value -> !value.isBlank())
+                .map(TestRunWebhookService::flag)
+                .orElse(autoAnalyzeDefault);
+    }
+
+    private static boolean flag(String raw) {
+        String value = raw.trim().toLowerCase();
+        return value.equals("1") || value.equals("true") || value.equals("yes") || value.equals("on");
     }
 
     /** Сравнение через SHA-256 дайджесты — без утечки длины исходного секрета. */

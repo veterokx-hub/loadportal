@@ -13,6 +13,8 @@ import {
 } from "@/lib/api";
 import { groupIntensity, groupRequests } from "@/lib/grouping";
 import { totalDuration } from "@/lib/profile";
+import { ENGINES, type Engine } from "@/lib/engines";
+import { FileUploadButton } from "@/components/FileUploadButton";
 
 type SourceMode = "build" | "upload";
 
@@ -49,11 +51,16 @@ export function NewRunForm({
   const [endLocal, setEndLocal] = useState("");
   const [endTouched, setEndTouched] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [cpu, setCpu] = useState("500m");
-  const [memory, setMemory] = useState("2Gi");
+  const [cluster, setCluster] = useState("");
+  const [namespace, setNamespace] = useState("");
+  const [service, setService] = useState("");
+  const [container, setContainer] = useState("");
+  const [cpu, setCpu] = useState("2");
+  const [memory, setMemory] = useState("4Gi");
   const [repository, setRepository] = useState("lt-ump");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadEngine, setUploadEngine] = useState<Engine>("jmeter");
   const [error, setError] = useState<string | null>(null);
 
   const selectedBuild = useMemo(
@@ -67,8 +74,8 @@ export function NewRunForm({
   );
 
   const engine =
-    (selectedBuild?.engine as "jmeter" | "k6" | undefined) ??
-    (selectedScript?.engine as "jmeter" | "k6" | undefined) ??
+    (selectedBuild?.engine as Engine | undefined) ??
+    (selectedScript?.engine as Engine | undefined) ??
     "jmeter";
 
   const filename =
@@ -77,8 +84,8 @@ export function NewRunForm({
       : selectedScript?.filename ?? "script";
 
   const scenarioPath = testId.trim()
-    ? `auto_lt/${testId.trim()}/{run_id}/${filename}`
-    : `auto_lt/{jira}/{run_id}/${filename}`;
+    ? `scenarios/${testId.trim()}/{run_id}/${filename}`
+    : `scenarios/{jira}/{run_id}/${filename}`;
 
   const durationSec = useMemo(() => {
     if (!scenarioPreview) return 300;
@@ -145,7 +152,7 @@ export function NewRunForm({
     setUploading(true);
     setError(null);
     try {
-      const uploaded = await uploadScript(file);
+      const uploaded = await uploadScript(file, uploadEngine);
       setScripts(await listScripts());
       setScriptId(uploaded.id);
       setSourceMode("upload");
@@ -170,11 +177,15 @@ export function NewRunForm({
         target_url: scenarioPreview?.base_url,
         start_time: localInputToIso(startLocal),
         end_time: localInputToIso(endLocal),
-        cpu: cpu.trim() || "500m",
-        memory: memory.trim() || "2Gi",
-        // scenario_path считает backend: auto_lt/{jira}/{portal_run_id}/{filename}
+        cpu: cpu.trim() || "2",
+        memory: memory.trim() || "4Gi",
+        // scenario_path считает backend: scenarios/{jira}/{portal_run_id}/{filename}
         pod_name: filename,
         repository,
+        target_cluster: cluster.trim(),
+        target_namespace: namespace.trim(),
+        target_service: service.trim(),
+        target_container: container.trim(),
       });
       if (run.status === "failed" && run.error_message) {
         setError(run.error_message);
@@ -251,13 +262,31 @@ export function NewRunForm({
       {sourceMode === "upload" && (
         <>
           <div className="field">
-            <label>Файл (.jmx или .js)</label>
-            <input
-              type="file"
-              accept=".jmx,.js,.ts,application/javascript,text/javascript"
-              disabled={uploading}
-              onChange={(e) => onUpload(e.target.files?.[0] ?? null)}
-            />
+            <label>Файл (.jmx, .js или .zip)</label>
+            <div className="inline" style={{ gap: 10, alignItems: "center" }}>
+              <select
+                value={uploadEngine}
+                style={{ width: 150 }}
+                onChange={(e) => setUploadEngine(e.target.value as Engine)}
+              >
+                {ENGINES.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.short}
+                  </option>
+                ))}
+              </select>
+              <FileUploadButton
+                accept=".jmx,.js,.ts,.zip,application/zip,application/javascript,text/javascript"
+                disabled={uploading}
+                onPick={(file) => void onUpload(file)}
+              />
+              {selectedScript && <span className="hint">{selectedScript.filename}</span>}
+            </div>
+            <div className="hint">
+              Движок уходит в <code>TOOL</code> пайплайна: по расширению .zip его не угадать
+              (JMeter+CSV, k6+CSV, Maven-проект Gatling). ZIP кладётся в S3
+              распакованным, в ту же папку ключа.
+            </div>
             {uploading && <div className="hint">Загрузка…</div>}
           </div>
           {scripts.length > 0 && (
@@ -303,6 +332,53 @@ export function NewRunForm({
         </div>
       </div>
 
+      <div className="field">
+        <label>Тестируемый сервис в кластере</label>
+        <div className="row">
+          <div className="field" style={{ marginBottom: 0 }}>
+            <input
+              value={cluster}
+              onChange={(e) => setCluster(e.target.value)}
+              placeholder="кластер"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <input
+              value={namespace}
+              onChange={(e) => setNamespace(e.target.value)}
+              placeholder="namespace"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <input
+              value={service}
+              onChange={(e) => setService(e.target.value)}
+              placeholder="сервис"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="field" style={{ marginBottom: 0 }}>
+            <input
+              value={container}
+              onChange={(e) => setContainer(e.target.value)}
+              placeholder="контейнер"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+        </div>
+        <div className="hint">
+          Не обязательно для запуска, но без этих полей модуль «Анализ» не найдёт метрики:
+          из URL стенда не видно, какие поды за ним стоят. Заполнено — отчёт соберётся
+          автоматически, как только тест закончится.
+        </div>
+      </div>
+
       <details
         open={advancedOpen}
         onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
@@ -314,11 +390,11 @@ export function NewRunForm({
         <div className="row" style={{ marginTop: 12 }}>
           <div className="field">
             <label>CPU</label>
-            <input value={cpu} onChange={(e) => setCpu(e.target.value)} placeholder="500m" />
+            <input value={cpu} onChange={(e) => setCpu(e.target.value)} placeholder="2" />
           </div>
           <div className="field">
             <label>Memory</label>
-            <input value={memory} onChange={(e) => setMemory(e.target.value)} placeholder="2Gi" />
+            <input value={memory} onChange={(e) => setMemory(e.target.value)} placeholder="4Gi" />
           </div>
         </div>
         <div className="hint">REPLICAS всегда 1. Память JVM задаётся в образе пайплайна.</div>

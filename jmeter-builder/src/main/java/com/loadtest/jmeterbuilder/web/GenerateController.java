@@ -76,8 +76,9 @@ public class GenerateController {
             zos.closeEntry();
 
             for (Dataset ds : datasets) {
-                if (ds.fileName() == null || ds.fileName().isBlank()) continue;
-                zos.putNextEntry(new ZipEntry(ds.fileName()));
+                String entry = zipEntryName(ds.fileName());
+                if (entry == null) continue;
+                zos.putNextEntry(new ZipEntry(entry));
                 zos.write(toCsv(ds).getBytes(StandardCharsets.UTF_8));
                 zos.closeEntry();
             }
@@ -112,6 +113,22 @@ public class GenerateController {
             return "\"" + v.replace("\"", "\"\"") + "\"";
         }
         return v;
+    }
+
+    private static String zipEntryName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return null;
+        }
+        String n = fileName.replace('\\', '/');
+        int slash = n.lastIndexOf('/');
+        if (slash >= 0) {
+            n = n.substring(slash + 1);
+        }
+        n = n.replaceAll("[^a-zA-Z0-9._-]", "_");
+        if (n.isBlank() || n.contains("..")) {
+            return null;
+        }
+        return n;
     }
 
     private String safeName(String name) {

@@ -1,0 +1,97 @@
+# Runner пула генераторов: pod джобы = генератор нагрузки.
+# Регистрация: теги lt-generators, run_untagged=false, locked к проекту cicd-runner-test —
+# чужие пайплайны не могут занять ноды генераторов.
+#
+# Требования к кластеру:
+#   - ноды с меткой lt.corp/pool=generators и taint lt.corp/generators=true:NoSchedule
+#     (несколько генераторов на ноду допустимы, см. affinity ниже);
+#   - chrony на нодах: шарды синхронизируются только по времени;
+#   - kubelet cpuManagerPolicy=static (желательно): под Guaranteed с целым cpu получает
+#     эксклюзивные ядра, и соседние генераторы не мешают друг другу по CPU;
+#   - namespace из k8s/lt-generators.yaml (квоты, NetworkPolicy, PSA baseline).
+
+concurrent = 20
+
+[[runners]]
+  name = "lt-generators"
+  url = "https://gitlab.corp.example"
+  executor = "kubernetes"
+  # Верхняя граница одновременных подов-генераторов (smoke + шарды): сколько влезает
+  # в пул по ресурсам, а не число нод. Реальный потолок держит ResourceQuota namespace.
+  limit = 20
+  [runners.kubernetes]
+    namespace = "lt-generators"
+    service_account = "lt-generator"
+    # Ожидание планирования пода: autoscaler поднимает ноду за минуты.
+    # Меньше LT_SHARD_START_GRACE_SEC нельзя — иначе шард умрёт в Pending раньше старта.
+    poll_timeout = 900
+    pod_termination_grace_period_seconds = 120
+    privileged = false
+    allow_privilege_escalation = false
+    pull_policy = ["if-not-present"]
+    allowed_pull_policies = ["if-not-present"]
+    image_pull_secrets = ["registry-lt"]
+    # Только образы контура НТ: произвольный image в child.yml не пройдёт.
+    allowed_images = ["registry.corp.example/lt/lt-jmeter*", "registry.corp.example/lt/lt-k6*", "registry.corp.example/lt/lt-gatling*"]
+    allowed_services = []
+
+    # Дефолты для джоб без переопределения; максимумы ограничивают RUN_SPEC.resources.
+    cpu_request = "2"
+    cpu_limit = "2"
+    memory_request = "4Gi"
+    memory_limit = "4Gi"
+    cpu_request_overwrite_max_allowed = "16"
+    cpu_limit_overwrite_max_allowed = "16"
+    memory_request_overwrite_max_allowed = "32Gi"
+    memory_limit_overwrite_max_allowed = "32Gi"
+
+    # QoS Guaranteed требует requests == limits у ВСЕХ контейнеров пода, включая helper:
+    # иначе под Burstable, и kubelet выселит генератор первым при нехватке памяти.
+    helper_cpu_request = "200m"
+    helper_cpu_limit = "200m"
+    helper_memory_request = "256Mi"
+    helper_memory_limit = "256Mi"
+
+    [runners.kubernetes.node_selector]
+      "lt.corp/pool" = "generators"
+
+    [runners.kubernetes.node_tolerations]
+      "lt.corp/generators=true" = "NoSchedule"
+
+    [runners.kubernetes.pod_labels]
+      "lt.corp/role" = "generator"
+      "lt.corp/pipeline" = "${CI_PIPELINE_ID}"
+
+    [runners.kubernetes.pod_security_context]
+      run_as_non_root = true
+      run_as_user = 10001
+      run_as_group = 0
+      fs_group = 0
+
+    [runners.kubernetes.build_container_security_context]
+      [runners.kubernetes.build_container_security_context.capabilities]
+        drop = ["ALL"]
+
+    # Несколько генераторов на ноду допустимы (нод меньше, чем шардов), но планировщик
+    # сначала раскладывает их по разным нодам: так шарды реже делят NIC и conntrack.
+    # CPU и память изолирует QoS Guaranteed; сеть ноды — нет, поэтому при упаковке
+    # следить за утилизацией NIC и CPU ноды генератора (ниже 70–80%).
+    #
+    # Когда нод станет не меньше шардов, заменить preferred на required — строго один
+    # генератор на ноду:
+    #   [[runners.kubernetes.affinity.pod_anti_affinity.required_during_scheduling_ignored_during_execution]]
+    #     topology_key = "kubernetes.io/hostname"  + тот же label_selector
+    [runners.kubernetes.affinity]
+      [runners.kubernetes.affinity.pod_anti_affinity]
+        [[runners.kubernetes.affinity.pod_anti_affinity.preferred_during_scheduling_ignored_during_execution]]
+          weight = 100
+          [runners.kubernetes.affinity.pod_anti_affinity.preferred_during_scheduling_ignored_during_execution.pod_affinity_term]
+            topology_key = "kubernetes.io/hostname"
+            [runners.kubernetes.affinity.pod_anti_affinity.preferred_during_scheduling_ignored_during_execution.pod_affinity_term.label_selector]
+              [[runners.kubernetes.affinity.pod_anti_affinity.preferred_during_scheduling_ignored_during_execution.pod_affinity_term.label_selector.match_expressions]]
+                key = "lt.corp/role"
+                operator = "In"
+                values = ["generator"]
+
+  [runners.feature_flags]
+    FF_KUBERNETES_HONOR_ENTRYPOINT = true

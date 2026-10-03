@@ -10,4 +10,7 @@ public record LaunchParams(
         String memory,
         String startTime,
         String endTime) {
+    public LaunchParams withScenarioPath(String path) {
+        return new LaunchParams(testId, path, podName, repository, cpu, memory, startTime, endTime);
+    }
 }

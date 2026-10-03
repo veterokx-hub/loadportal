@@ -1,7 +1,7 @@
 package com.loadtest.constructor.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.loadtest.constructor.config.DiscoveryConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +26,7 @@ public class ModuleEndpoints {
     private final String defaultAnalyzer;
     private final String defaultK6;
     private final String defaultJmeter;
+    private final String defaultGatling;
 
     /**
      * Используется probe-клиент с короткими таймаутами: резолв вызывается перед каждой сборкой,
@@ -38,13 +39,15 @@ public class ModuleEndpoints {
             @Qualifier("probeRestClient") RestClient restClient,
             @Value("${analyzer.base-url:http://localhost:8000}") String defaultAnalyzer,
             @Value("${k6-generator.base-url:http://localhost:8001}") String defaultK6,
-            @Value("${jmeter-builder.base-url:http://localhost:8081}") String defaultJmeter) {
+            @Value("${jmeter-builder.base-url:http://localhost:8081}") String defaultJmeter,
+            @Value("${gatling-generator.base-url:http://localhost:8002}") String defaultGatling) {
         this.discovery = discovery;
         this.objectMapper = objectMapper;
         this.restClient = restClient;
         this.defaultAnalyzer = defaultAnalyzer;
         this.defaultK6 = defaultK6;
         this.defaultJmeter = defaultJmeter;
+        this.defaultGatling = defaultGatling;
     }
 
     public String analyzerBaseUrl() {
@@ -57,6 +60,10 @@ public class ModuleEndpoints {
 
     public String jmeterBuilderBaseUrl() {
         return resolve("jmeter-builder", discovery.getModules().getJmeterBuilderUrl(), defaultJmeter);
+    }
+
+    public String gatlingGeneratorBaseUrl() {
+        return resolve("gatling-generator", discovery.getModules().getGatlingGeneratorUrl(), defaultGatling);
     }
 
     /** Пусто = same-origin (браузер ходит на /api через Ingress). */
@@ -106,6 +113,7 @@ public class ModuleEndpoints {
             case "analyzer" -> blankTo(consul.getServiceAnalyzer(), "loadtest-analyzer");
             case "k6-generator" -> blankTo(consul.getServiceK6(), "loadtest-k6-generator");
             case "jmeter-builder" -> blankTo(consul.getServiceJmeter(), "loadtest-jmeter-builder");
+            case "gatling-generator" -> blankTo(consul.getServiceGatling(), "loadtest-gatling-generator");
             case "constructor" -> blankTo(consul.getServiceConstructor(), "loadtest-constructor");
             case "frontend" -> blankTo(consul.getServiceFrontend(), "loadtest-frontend");
             default -> "loadtest-" + serviceKey;
@@ -156,6 +164,7 @@ public class ModuleEndpoints {
                 analyzerBaseUrl(),
                 k6GeneratorBaseUrl(),
                 jmeterBuilderBaseUrl(),
+                gatlingGeneratorBaseUrl(),
                 frontendApiBaseUrl(),
                 discovery.getConsul().isEnabled(),
                 pingConsul(),
@@ -168,6 +177,7 @@ public class ModuleEndpoints {
             String analyzerUrl,
             String k6GeneratorUrl,
             String jmeterBuilderUrl,
+            String gatlingGeneratorUrl,
             String frontendApiBaseUrl,
             boolean consulEnabled,
             boolean consulReachable,

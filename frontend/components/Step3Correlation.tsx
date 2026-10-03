@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   Dataset,
   Extraction,
@@ -10,12 +10,14 @@ import type {
   ParamSource,
   RequestModel,
   Scenario,
+  Validation,
 } from "@/lib/types";
 import { ParamSourceEditor } from "@/components/ParamSourceEditor";
 import { DatasetsEditor } from "@/components/DatasetsEditor";
+import { NumberField } from "@/components/NumberField";
 import {
   PARAM_LOCATION_LABEL,
-  bracesIn,
+  bracesInAddress,
   consolidateRequestParams,
   paramsFromTemplates,
   uiParams,
@@ -32,8 +34,53 @@ function sourceEmpty(src: ParamSource): boolean {
   return false;
 }
 
-function pathTemplateParam(name: string, template: string): boolean {
-  return template.includes(`{${name}}`);
+function validationCustom(v: Validation): boolean {
+  return (
+    !v.check_response_code ||
+    v.expected_status !== 200 ||
+    (v.response_contains ?? "").trim() !== ""
+  );
+}
+
+function validationSummary(v: Validation): string {
+  if (!v.check_response_code && !(v.response_contains ?? "").trim()) return "выкл";
+  const bits: string[] = [];
+  if (v.check_response_code) bits.push(`код ${v.expected_status}`);
+  const contains = (v.response_contains ?? "").trim();
+  if (contains) bits.push(`содержит «${contains}»`);
+  return bits.join(" · ");
+}
+
+function FoldSection({
+  title,
+  summary,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  summary?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`req-section ${open ? "is-open" : "is-folded"}`}>
+      <button
+        type="button"
+        className="ghost req-section-toggle"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className="req-section-title">
+          {title}
+          {summary != null && summary !== "" && <span className="muted">{summary}</span>}
+        </span>
+        <span className="muted">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && <div className="req-section-body">{children}</div>}
+    </div>
+  );
 }
 
 /** Режим тела по содержимому: пусто → none, JSON-подобное → json, иначе raw. */
@@ -76,9 +123,9 @@ function RequestParamsEditor({
   columns: string[];
   updateRequest: (id: string, patch: Partial<RequestModel>) => void;
 }) {
-  const template = urlTemplate(req);
-  const pathNames = useMemo(() => bracesIn(template), [template]);
-  const hasPath = pathNames.length > 0;
+  const pathNames = useMemo(() => bracesInAddress(req), [req]);
+  const hasPath =
+    pathNames.length > 0 || req.params.some((p) => p.location === "path");
 
   const tabs = useMemo(
     () => (hasPath ? (["header", "query", "body", "path"] as const) : (["header", "query", "body"] as const)),
@@ -117,11 +164,7 @@ function RequestParamsEditor({
 
   const rows = req.params
     .map((p, idx) => ({ p, idx }))
-    .filter(({ p }) => {
-      if (p.location !== tab) return false;
-      if (tab === "path") return pathTemplateParam(p.name, template);
-      return true;
-    });
+    .filter(({ p }) => p.location === tab);
 
   function setParamSource(idx: number, source: ParamSource) {
     const params = req.params.map((p, i) => (i === idx ? { ...p, source } : p));
@@ -152,11 +195,22 @@ function RequestParamsEditor({
     });
   }
 
-  function setBodyContent(content: string) {
-    updateRequest(req.id, {
-      body: bodyModeFor(content, req.body),
-      params: paramsFromTemplates(template, content, req.params),
-    });
+  const reqRef = useRef(req);
+  reqRef.current = req;
+  const bodyTimer = useRef<number>(0);
+
+  function setBodyContent(content: string, immediate = false) {
+    updateRequest(req.id, { body: bodyModeFor(content, req.body) });
+    const apply = () => {
+      const r = reqRef.current;
+      updateRequest(r.id, {
+        body: bodyModeFor(content, r.body),
+        params: paramsFromTemplates(urlTemplate(r), content, r.params),
+      });
+    };
+    window.clearTimeout(bodyTimer.current);
+    if (immediate) apply();
+    else bodyTimer.current = window.setTimeout(apply, 450);
   }
 
   function addParam(location: ParamLocation) {
@@ -231,6 +285,7 @@ function RequestParamsEditor({
             placeholder={'{"login": "{username}", "password": "{password}"}'}
             value={req.body?.content ?? ""}
             onChange={(e) => setBodyContent(e.target.value)}
+            onBlur={(e) => setBodyContent(e.target.value, true)}
           />
           <div className="hint">
             Фрагменты в <code>{"{...}"}</code> появятся ниже как параметры Body — их источник
@@ -277,12 +332,15 @@ function RequestParamsEditor({
                       onChange={(ev) => patchParam(idx, { name: ev.target.value })}
                     />
                   )}
-                  <div className="param-name-meta">
-                    {isPath && <span>из URL</span>}
-                    {p.required && <span className="param-req">обязательный</span>}
-                    {p.schema_type && <span>: {p.schema_type}</span>}
-                    {invalid && <span className="param-req">заполните значение</span>}
-                  </div>
+                  {(isPath || (p.required && sourceEmpty(p.source)) || p.schema_type) && (
+                    <div className="param-name-meta">
+                      {isPath && <span>из URL</span>}
+                      {p.required && sourceEmpty(p.source) && (
+                        <span className="param-req">обязательный</span>
+                      )}
+                      {p.schema_type && <span>: {p.schema_type}</span>}
+                    </div>
+                  )}
                 </div>
                 <div className="param-source-cell">
                   <ParamSourceEditor
@@ -331,13 +389,27 @@ export function Step3Correlation({
   const [openIds, setOpenIds] = useState<Set<string>>(
     () => new Set(ordered[0]?.id ? [ordered[0].id] : [])
   );
+  const [fold, setFold] = useState<Record<string, { extract?: boolean; valid?: boolean }>>({});
+
+  function extractOpen(req: RequestModel): boolean {
+    return fold[req.id]?.extract ?? req.extractions.length > 0;
+  }
+
+  function validOpen(req: RequestModel): boolean {
+    return fold[req.id]?.valid ?? validationCustom(req.validation);
+  }
+
+  function setFoldOpen(id: string, key: "extract" | "valid", open: boolean) {
+    setFold((prev) => ({ ...prev, [id]: { ...prev[id], [key]: open } }));
+  }
 
   // Синхронизация path из URL + миграция headers → params при входе на шаг.
+  // Не вызываем setScenario, если ничего не поменялось — иначе чистая сборка
+  // из истории помечается как изменённая.
   useEffect(() => {
-    setScenario({
-      ...scenario,
-      requests: scenario.requests.map(consolidateRequestParams),
-    });
+    const requests = scenario.requests.map(consolidateRequestParams);
+    if (JSON.stringify(requests) === JSON.stringify(scenario.requests)) return;
+    setScenario({ ...scenario, requests });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- однократно при монтировании
   }, []);
 
@@ -386,6 +458,7 @@ export function Step3Correlation({
       default_value: "NOT_FOUND",
     };
     updateRequest(req.id, { extractions: [...req.extractions, ext] });
+    setFoldOpen(req.id, "extract", true);
   }
 
   function patchExtraction(req: RequestModel, idx: number, p: Partial<Extraction>) {
@@ -472,12 +545,29 @@ export function Step3Correlation({
                   updateRequest={updateRequest}
                 />
 
-                <div className="req-section">
-                  <div className="req-section-title">
-                    Извлечь из ответа
-                    <span className="muted">для корреляции в следующих запросах</span>
+                {available.length > 0 && (
+                  <div className="hint" style={{ marginTop: 8 }}>
+                    Доступно из предыдущих запросов:{" "}
+                    {available.map((v) => (
+                      <code key={v} style={{ marginRight: 4 }}>
+                        ${"{"}
+                        {v}
+                        {"}"}
+                      </code>
+                    ))}
                   </div>
+                )}
 
+                <FoldSection
+                  title="Извлечь из ответа"
+                  summary={
+                    req.extractions.length > 0
+                      ? `${req.extractions.length} · ${req.extractions.map((e) => e.variable).filter(Boolean).join(", ")}`
+                      : "не используется"
+                  }
+                  open={extractOpen(req)}
+                  onToggle={() => setFoldOpen(req.id, "extract", !extractOpen(req))}
+                >
                   {req.extractions.length === 0 ? (
                     <div className="param-empty">
                       <span>Нет извлечений.</span>
@@ -550,23 +640,14 @@ export function Step3Correlation({
                       </button>
                     </div>
                   )}
+                </FoldSection>
 
-                  {available.length > 0 && (
-                    <div className="hint" style={{ marginTop: 8 }}>
-                      Доступно из предыдущих запросов:{" "}
-                      {available.map((v) => (
-                        <code key={v} style={{ marginRight: 4 }}>
-                          ${"{"}
-                          {v}
-                          {"}"}
-                        </code>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="req-section">
-                  <div className="req-section-title">Валидация ответа</div>
+                <FoldSection
+                  title="Валидация ответа"
+                  summary={validationSummary(req.validation)}
+                  open={validOpen(req)}
+                  onToggle={() => setFoldOpen(req.id, "valid", !validOpen(req))}
+                >
                   <div className="row">
                     <div className="field" style={{ flex: "none" }}>
                       <label>Проверять код</label>
@@ -584,12 +665,11 @@ export function Step3Correlation({
                     </div>
                     <div className="field" style={{ width: 140, flex: "none" }}>
                       <label>Ожидаемый код</label>
-                      <input
-                        type="number"
+                      <NumberField
+                        fieldId={`status-${req.id}`}
                         value={req.validation.expected_status}
-                        onChange={(e) =>
-                          setValidation(req, { expected_status: Number(e.target.value) })
-                        }
+                        min={100}
+                        onCommit={(n) => setValidation(req, { expected_status: n })}
                       />
                     </div>
                     <div className="field" style={{ flex: 1, minWidth: 220 }}>
@@ -603,7 +683,7 @@ export function Step3Correlation({
                       />
                     </div>
                   </div>
-                </div>
+                </FoldSection>
               </div>
             )}
           </div>

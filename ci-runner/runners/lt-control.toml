@@ -1,0 +1,48 @@
+# Runner управляющих джоб: lint, pre-check, trigger дочернего пайплайна, gate, сборка образов.
+# Регистрация: теги lt-control, run_untagged=false.
+# Отдельный пул нужен, чтобы управляющие джобы не ждали, пока генераторы освободят ноды,
+# и чтобы gate отработал, даже когда пул генераторов исчерпан.
+
+concurrent = 10
+
+[[runners]]
+  name = "lt-control"
+  url = "https://gitlab.corp.example"
+  executor = "kubernetes"
+  limit = 10
+  [runners.kubernetes]
+    namespace = "lt-control"
+    service_account = "lt-control"
+    poll_timeout = 300
+    privileged = false
+    allow_privilege_escalation = false
+    pull_policy = ["if-not-present"]
+    allowed_pull_policies = ["if-not-present"]
+    image_pull_secrets = ["registry-lt"]
+    # Сборка kaniko идёт отдельным runner'ом lt-images: этому пулу root запрещён.
+    # Selftest образов запускается здесь, поэтому разрешён весь префикс lt/.
+    allowed_images = ["registry.corp.example/lt/*"]
+    allowed_services = []
+
+    cpu_request = "500m"
+    cpu_limit = "1"
+    memory_request = "512Mi"
+    memory_limit = "1Gi"
+    # Selftest Gatling — офлайн mvn. Выше потолка джоба не стартует.
+    cpu_request_overwrite_max_allowed = "2"
+    cpu_limit_overwrite_max_allowed = "2"
+    memory_request_overwrite_max_allowed = "4Gi"
+    memory_limit_overwrite_max_allowed = "4Gi"
+
+    [runners.kubernetes.node_selector]
+      "lt.corp/pool" = "control"
+
+    [runners.kubernetes.pod_security_context]
+      run_as_non_root = true
+      run_as_user = 10001
+      run_as_group = 0
+      fs_group = 0
+
+    [runners.kubernetes.build_container_security_context]
+      [runners.kubernetes.build_container_security_context.capabilities]
+        drop = ["ALL"]

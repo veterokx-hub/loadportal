@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { saveBuild } from "@/lib/api";
 import type { Scenario } from "@/lib/types";
+import { ENGINES, type Engine } from "@/lib/engines";
 
 /**
  * Диалог «Сохранить текущую сборку?» — показывается перед действиями,
@@ -19,12 +20,12 @@ export function SaveScenarioDialog({
   scenario: Scenario;
   title: string;
   message: string;
-  defaultEngine?: "jmeter" | "k6";
+  defaultEngine?: Engine;
   onCancel: () => void;
   /** Вызывается после сохранения (saved=true) или при «продолжить без сохранения». */
   onDone: (saved: boolean) => void;
 }) {
-  const [engine, setEngine] = useState<"jmeter" | "k6">(defaultEngine);
+  const [engine, setEngine] = useState<Engine>(defaultEngine);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,18 +50,16 @@ export function SaveScenarioDialog({
         <div className="field">
           <label>Движок для сохранения</label>
           <div className="inline">
-            <div
-              className={`pill-source ${engine === "jmeter" ? "active" : ""}`}
-              onClick={() => setEngine("jmeter")}
-            >
-              JMeter (.jmx)
-            </div>
-            <div
-              className={`pill-source ${engine === "k6" ? "active" : ""}`}
-              onClick={() => setEngine("k6")}
-            >
-              k6 (.js)
-            </div>
+            {ENGINES.map((e) => (
+              <div
+                key={e.id}
+                className={`pill-source pill-engine ${engine === e.id ? "active" : ""}`}
+                onClick={() => setEngine(e.id)}
+              >
+                {e.label}
+                <span className="pill-engine-tagline">{e.tagline}</span>
+              </div>
+            ))}
           </div>
         </div>
 

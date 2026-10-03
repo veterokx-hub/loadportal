@@ -1,8 +1,8 @@
 package com.loadtest.orchestrator.web;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.loadtest.orchestrator.metrics.PortalMetrics;
 import com.loadtest.orchestrator.service.TestRunWebhookService;
 import org.slf4j.Logger;
@@ -59,6 +59,12 @@ public class GitLabWebhookController {
             }
 
             JsonNode attrs = root.path("object_attributes");
+            // Дочерний pipeline не несёт PORTAL_RUN_ID. Его статус уже сидит в родителе (strategy: depend).
+            if ("parent_pipeline".equals(attrs.path("source").asText(""))) {
+                log.info("GitLab webhook ignored: child pipeline {}", attrs.path("id").asLong(0));
+                metrics.recordGitLabWebhook("ignored");
+                return ResponseEntity.ok(Map.of("status", "ignored"));
+            }
             long rawPipelineId = attrs.path("id").asLong(0);
             Long pipelineId = rawPipelineId == 0 ? null : rawPipelineId;
             String status = attrs.path("status").asText("");
@@ -67,8 +73,28 @@ public class GitLabWebhookController {
 
             webhookService.applyPipelineEvent(pipelineId, status, webUrl, runId);
             return ResponseEntity.ok(Map.of("status", "ok"));
-        } catch (JsonProcessingException ex) {
+        } catch (JacksonException ex) {
             log.warn("GitLab webhook parse error: {}", ex.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", "invalid payload"));
+        }
+    }
+
+    /** verdict.json со стадии publish. Тот же секрет, что у событий пайплайна. */
+    @PostMapping("/verdict")
+    public ResponseEntity<Map<String, String>> handleVerdict(
+            @RequestBody String rawBody,
+            @RequestHeader(value = "X-Gitlab-Token", required = false) String token) {
+        if (!webhookService.verifySecret(token == null ? "" : token)) {
+            log.warn("Verdict callback rejected: invalid token");
+            metrics.recordGitLabWebhook("rejected");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "invalid token"));
+        }
+        try {
+            JsonNode body = objectMapper.readTree(rawBody);
+            String result = webhookService.applyVerdict(body);
+            return ResponseEntity.ok(Map.of("status", result));
+        } catch (JacksonException ex) {
+            log.warn("Verdict callback parse error: {}", ex.getMessage());
             return ResponseEntity.badRequest().body(Map.of("error", "invalid payload"));
         }
     }

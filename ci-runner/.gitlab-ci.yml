@@ -1,0 +1,136 @@
+# Исполняемая часть модуля 3 «Запуск» портала НТ.
+# Контракт входа: contracts/run-spec.schema.json (RUN_SPEC_B64) + legacy плоские переменные.
+# Продуктовый quality gate подключает lt-ci-templates/qg.yml и приходит сюда как pipeline.
+#
+# Родительский пайплайн только проверяет прогон и генерирует дочерний (.nt/child.yml):
+#   pre-check -> load (trigger) -> [ smoke -> generate x N шардов -> gate -> publish ]
+# publish читает переменные проекта LT_PORTAL_CALLBACK_URL и LT_PORTAL_CALLBACK_TOKEN.
+# Токен совпадает с секретом вебхука GitLab (заголовок X-Gitlab-Token).
+# Секреты сценария: переменные проекта LT_VAULT_SERVER_URL и LT_VAULT_AUTH_ROLE.
+# Дочерний пайплайн переменные триггера не видит — в yaml их специально нет.
+#
+# Сборка образов — отдельный контур (images/gitlab-ci.yml): Run pipeline с LT_PIPELINE=images.
+# Дочерний нужен потому, что parallel принимает только литерал, а число шардов,
+# образ и ресурсы пода известны лишь после pre-check.
+
+include:
+  - local: images/gitlab-ci.yml
+
+workflow:
+  rules:
+    # Портал НТ и dev-пайплайны — только через Trigger API.
+    - if: '$CI_PIPELINE_SOURCE == "trigger"'
+    # Multi-project trigger (dev-пайплайн через include-шаблон).
+    - if: '$CI_PIPELINE_SOURCE == "pipeline"'
+    # Ручной запуск с параметрами из GitLab UI.
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    # Только для проверки самого пайплайна: запускается исключительно стадия lint.
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    # Push не запускает прогон. Исключение — сборка образов, когда изменился images/.
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - images/**/*
+    - when: never
+
+stages:
+  - lint
+  - pre-check
+  - run
+  - image-build
+  - image-scan
+  - image-sign
+  - image-selftest
+
+variables:
+  LT_CONTRACT_VERSION: "1"
+  # Часовой пояс для timestamp без смещения. Одно значение на портал, CI и генераторы.
+  LT_DEFAULT_TZ: "Europe/Moscow"
+  # warn — предупреждать о заниженных ресурсах генератора; strict — отклонять прогон.
+  # Портал по умолчанию шлёт cpu=2 и memory=4Gi — это порог MIN_* в run_spec.py.
+  LT_RESOURCE_POLICY: "warn"
+  # Запас на планирование подов и pull образа перед общим стартом шардов.
+  LT_SHARD_START_GRACE_SEC: "120"
+  # Дольше ждать начала окна в поде нельзя: слот runner'а простаивает. Дальше — планировщик портала.
+  LT_MAX_START_LAG_SEC: "900"
+  GIT_DEPTH: "1"
+  GIT_SUBMODULE_STRATEGY: "none"
+  # Образы строго по digest. После зелёного image-digests (или images/build.sh --push)
+  # четыре строки ниже обновляет отдельный MR. Тег рядом с digest — для человека.
+  LT_IMAGE_CI_TOOLS: "registry.corp.example/lt/lt-ci-tools:r1@sha256:REPLACE_ME"
+  LT_IMAGE_JMETER: "registry.corp.example/lt/lt-jmeter:5.6.3-r1@sha256:REPLACE_ME"
+  LT_IMAGE_K6: "registry.corp.example/lt/lt-k6:1.0.0-r1@sha256:REPLACE_ME"
+  LT_IMAGE_GATLING: "registry.corp.example/lt/lt-gatling:3.13.5-jdk17-r1@sha256:REPLACE_ME"
+  # Сборка образов. Digest'ы инструментов — после image-digests, сюда их переносит MR.
+  LT_REGISTRY: "registry.corp.example/lt"
+  LT_KANIKO_IMAGE: "registry.corp.example/proxy/kaniko:debug@sha256:REPLACE_ME"
+  LT_TRIVY_IMAGE: "registry.corp.example/proxy/trivy@sha256:REPLACE_ME"
+  LT_COSIGN_IMAGE: "registry.corp.example/proxy/cosign@sha256:REPLACE_ME"
+
+default:
+  image: $LT_IMAGE_CI_TOOLS
+  # Управляющие джобы — на отдельном пуле: gate и pre-check не ждут занятые генераторы.
+  tags:
+    - lt-control
+  # Нагрузочный прогон нельзя автоотменять при появлении нового пайплайна:
+  # это оставит висящие поды-генераторы и испорченный baseline.
+  interruptible: false
+
+# Прогонные стадии не должны исполняться в MR-пайплайнах, а lint — только в них.
+.rules-run: &rules-run
+  - if: '$LT_PIPELINE == "images"'
+    when: never
+  - if: '$CI_PIPELINE_SOURCE == "push"'
+    when: never
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    when: never
+  - when: on_success
+
+.rules-lint: &rules-lint
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    when: on_success
+  - when: never
+
+lint:
+  stage: lint
+  rules: *rules-lint
+  script:
+    - shellcheck ci/*.sh ci/lib/*.sh images/*.sh images/lt-base/lt-run images/lt-base/install-os-packages.sh images/selftest-inside.sh
+    - python3 -m json.tool contracts/run-spec.schema.json > /dev/null
+    - python3 -m unittest discover -s ci/tests -v
+    # Примеры контракта — исполняемая документация: ломая схему, ломаем lint.
+    - |
+      for example in contracts/examples/*.json; do
+        echo "--- $example"
+        python3 ci/lib/run_spec.py --spec-file "$example" --dry-run
+      done
+
+pre-check:
+  stage: pre-check
+  rules: *rules-run
+  script:
+    - bash ci/pre-check.sh
+  artifacts:
+    # when: always — манифест нужен для разбора именно тогда, когда pre-check упал.
+    # .nt/ содержит run.json, run.env, замороженный сценарий и child.yml.
+    when: always
+    expire_in: 7 days
+    paths:
+      - .nt/
+
+load:
+  stage: run
+  rules: *rules-run
+  needs:
+    - pre-check
+  # Один пул генераторов — один прогон за раз. Иначе прогоны дерутся за ноды,
+  # и оба замера становятся недостоверными. Блокировка держится до конца дочернего пайплайна.
+  resource_group: lt-generators
+  variables:
+    # По нему дочерние джобы забирают артефакт pre-check (needs:pipeline).
+    PARENT_PIPELINE_ID: $CI_PIPELINE_ID
+  trigger:
+    include:
+      - artifact: .nt/child.yml
+        job: pre-check
+    # Статус родителя = статус дочернего: вердикт gate виден порталу через webhook родителя.
+    strategy: depend

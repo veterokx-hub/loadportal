@@ -121,6 +121,14 @@ public class ScriptService {
                 || filename.toLowerCase(Locale.ROOT).endsWith(".ts"))) {
             return "k6";
         }
-        throw new IllegalArgumentException("Укажите движок (jmeter/k6) или расширение .jmx/.js");
+        if (filename != null && filename.toLowerCase(Locale.ROOT).endsWith(".java")) {
+            return "gatling";
+        }
+        if (filename != null && filename.toLowerCase(Locale.ROOT).endsWith(".zip")) {
+            throw new IllegalArgumentException(
+                    "Для .zip укажите движок явно: jmeter, k6 или gatling");
+        }
+        throw new IllegalArgumentException(
+                "Укажите движок (jmeter/k6/gatling) или расширение .jmx/.js/.java");
     }
 }

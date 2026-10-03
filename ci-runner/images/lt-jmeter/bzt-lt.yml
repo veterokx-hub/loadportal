@@ -1,0 +1,22 @@
+# Базовый конфиг Taurus контура НТ. Taurus читает /etc/bzt.d/* до конфига прогона.
+# Смысл один: Taurus только запускает то, что уже лежит в образе, и ничего не качает.
+settings:
+  check-updates: false
+  check-interval: 5s
+
+modules:
+  jmeter:
+    path: /opt/jmeter/bin/jmeter
+    # Не доустанавливать плагины по содержимому JMX: набор плагинов фиксирован образом.
+    detect-plugins: false
+    # Версия определяется по установленному JMeter: при существующем path Taurus ничего не качает.
+    version: auto
+  console:
+    disable: true
+
+# BlazeMeter-отчётность выключена явно: результаты не должны уходить наружу.
+reporting:
+  - module: final-stats
+    summary: true
+    percentiles: true
+    test-duration: true
