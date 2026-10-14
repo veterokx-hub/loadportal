@@ -88,33 +88,20 @@ public class JmxBuilder {
                 // Throughput Shaping Timer — профиль RPS на всю группу
                 appendWithHashTree(doc, ctgChildren, throughputShapingTimer(doc, grp.intensity(), load));
 
-                // Сэмплеры в порядке
+                // Сэмплеры в порядке. Процент < 100 — Throughput Controller на поток.
+                // Smoke (свойство lt.mode) обходит контроллер: проверка должна увидеть каждый запрос.
                 for (Request req : grp.requests()) {
-                    // repeat > 1 -> оборачиваем в Loop Controller (запрос N раз за итерацию потока),
-                    // что даёт разную интенсивность внутри одной корреляционной группы.
-                    Element parentChildren = ctgChildren;
-                    if (req.repeatOrOne() > 1) {
-                        Element loop = loopController(doc, req.repeatOrOne(), req.name());
-                        parentChildren = appendWithHashTree(doc, ctgChildren, loop);
+                    int pct = throughputPercent(req, grp.requests());
+                    if (pct >= 100) {
+                        appendSampler(doc, ctgChildren, req, base);
+                        continue;
                     }
-                    Element sampler = httpSampler(doc, req, base);
-                    Element samplerChildren = appendWithHashTree(doc, parentChildren, sampler);
-
-                    List<KeyValue> headers = effectiveHeaders(req);
-                    if (!headers.isEmpty()) {
-                        appendWithHashTree(doc, samplerChildren, headerManager(doc, headers));
-                    }
-                    for (Extraction ex : req.extractions()) {
-                        appendWithHashTree(doc, samplerChildren, extractor(doc, ex));
-                    }
-                    // валидация: код ответа (всегда, если включено) + опциональный regex
-                    Validation v = req.validation();
-                    if (v.checkResponseCode()) {
-                        appendWithHashTree(doc, samplerChildren, responseCodeAssertion(doc, v.expectedStatus()));
-                    }
-                    if (v.responseContains() != null && !v.responseContains().isBlank()) {
-                        appendWithHashTree(doc, samplerChildren, responseContainsAssertion(doc, v.responseContains()));
-                    }
+                    Element smokeIf = ifMode(doc, true, req.name());
+                    appendSampler(doc, appendWithHashTree(doc, ctgChildren, smokeIf), req, base);
+                    Element loadIf = ifMode(doc, false, req.name());
+                    Element loadChildren = appendWithHashTree(doc, ctgChildren, loadIf);
+                    Element controller = throughputController(doc, pct, req.name());
+                    appendSampler(doc, appendWithHashTree(doc, loadChildren, controller), req, base);
                 }
             }
 
@@ -373,11 +360,73 @@ public class JmxBuilder {
         }
     }
 
-    private Element loopController(Document doc, int loops, String reqName) {
-        Element e = testElement(doc, "LoopController", "LoopControlPanel",
-                "LoopController", "Повтор ×" + loops + ": " + reqName);
-        e.appendChild(boolProp(doc, "LoopController.continue_forever", false));
-        e.appendChild(stringProp(doc, "LoopController.loops", String.valueOf(loops)));
+    private void appendSampler(Document doc, Element parentChildren, Request req, UrlParts base) {
+        Element sampler = httpSampler(doc, req, base);
+        Element samplerChildren = appendWithHashTree(doc, parentChildren, sampler);
+
+        List<KeyValue> headers = effectiveHeaders(req);
+        if (!headers.isEmpty()) {
+            appendWithHashTree(doc, samplerChildren, headerManager(doc, headers));
+        }
+        for (Extraction ex : req.extractions()) {
+            appendWithHashTree(doc, samplerChildren, extractor(doc, ex));
+        }
+        Validation v = req.validation();
+        if (v.checkResponseCode()) {
+            appendWithHashTree(doc, samplerChildren, responseCodeAssertion(doc, v.expectedStatus()));
+        }
+        if (v.responseContains() != null && !v.responseContains().isBlank()) {
+            appendWithHashTree(doc, samplerChildren, responseContainsAssertion(doc, v.responseContains()));
+        }
+    }
+
+    /** 100 — каждый проход. Группа из одного запроса не режется. null — старый repeat. */
+    static int throughputPercent(Request req, List<Request> members) {
+        if (members.size() < 2) return 100;
+        if (req.throughput() != null) return clampPercent(req.throughput());
+        boolean anyExplicit = false;
+        for (Request member : members) {
+            if (member.throughput() != null) anyExplicit = true;
+        }
+        if (anyExplicit) return 100;
+        int top = 1;
+        for (Request member : members) top = Math.max(top, member.repeatOrOne());
+        return clampPercent((int) Math.round(100.0 * req.repeatOrOne() / top));
+    }
+
+    private static int clampPercent(int value) {
+        return Math.min(100, Math.max(1, value));
+    }
+
+    private Element ifMode(Document doc, boolean smoke, String reqName) {
+        Element e = testElement(doc, "IfController", "IfControllerPanel", "IfController",
+                (smoke ? "Smoke: " : "Load: ") + reqName);
+        String expr = smoke
+                ? "${__groovy(\"smoke\".equals(props.get(\"lt.mode\")))}"
+                : "${__groovy(!\"smoke\".equals(props.get(\"lt.mode\")))}";
+        e.appendChild(stringProp(doc, "IfController.condition", expr));
+        e.appendChild(boolProp(doc, "IfController.evaluateAll", false));
+        e.appendChild(boolProp(doc, "IfController.useExpression", true));
+        return e;
+    }
+
+    private Element throughputController(Document doc, int percent, String reqName) {
+        Element e = testElement(doc, "ThroughputController", "ThroughputControllerGui",
+                "ThroughputController", percent + "%: " + reqName);
+        e.appendChild(intProp(doc, "ThroughputController.style", 1));
+        e.appendChild(boolProp(doc, "ThroughputController.perThread", true));
+        e.appendChild(intProp(doc, "ThroughputController.maxThroughput", 1));
+        Element pct = doc.createElement("FloatProperty");
+        pct.appendChild(textEl(doc, "name", "ThroughputController.percentThroughput"));
+        pct.appendChild(textEl(doc, "value", percent + ".0"));
+        pct.appendChild(textEl(doc, "savedValue", "0.0"));
+        e.appendChild(pct);
+        return e;
+    }
+
+    private Element textEl(Document doc, String tag, String value) {
+        Element e = doc.createElement(tag);
+        e.setTextContent(value);
         return e;
     }
 
@@ -460,9 +509,12 @@ public class JmxBuilder {
                 "bzm - Random CSV Data Set: " + ds.name());
         e.appendChild(stringProp(doc, "filename", ds.fileName()));
         e.appendChild(stringProp(doc, "fileEncoding", "UTF-8"));
-        e.appendChild(stringProp(doc, "delimiter", ","));
+        e.appendChild(stringProp(doc, "delimiter", CsvFiles.delimiter(ds)));
         e.appendChild(stringProp(doc, "variableNames", String.join(",", ds.columns())));
         e.appendChild(boolProp(doc, "randomOrder", true));
+        // Плагин не читает quotedData: файл для него пишется без кавычек,
+        // разделитель выбран так, чтобы не встречаться в ячейках.
+        e.appendChild(boolProp(doc, "quotedData", false));
         // Первая строка CSV — заголовки колонок (как в портале / k6).
         e.appendChild(boolProp(doc, "ignoreFirstLine", true));
         e.appendChild(boolProp(doc, "rewindOnTheEndOfList", true));
@@ -479,7 +531,8 @@ public class JmxBuilder {
         // Первая строка CSV — заголовки колонок (как в портале / k6).
         e.appendChild(boolProp(doc, "ignoreFirstLine", true));
         e.appendChild(stringProp(doc, "variableNames", String.join(",", ds.columns())));
-        e.appendChild(boolProp(doc, "quotedData", false));
+        // toCsv экранирует значения с запятой/кавычкой по RFC 4180 — без quotedData JMeter их разрежет.
+        e.appendChild(boolProp(doc, "quotedData", true));
         e.appendChild(boolProp(doc, "recycle", true));
         e.appendChild(stringProp(doc, "shareMode", "shareMode.all"));
         e.appendChild(boolProp(doc, "stopThread", false));
@@ -522,9 +575,12 @@ public class JmxBuilder {
     /** Замена {name} → value, не трогая JMeter-переменные ${name}. */
     private static String replacePlaceholder(String text, String name, String value) {
         if (text == null || name == null || name.isBlank()) return text;
-        return text.replaceAll(
+        String rendered = value == null ? "" : value;
+        String withoutBrace = text.replaceAll(
                 "(?<!\\$)\\{" + java.util.regex.Pattern.quote(name) + "\\}",
-                java.util.regex.Matcher.quoteReplacement(value == null ? "" : value));
+                java.util.regex.Matcher.quoteReplacement(rendered));
+        // ${name} из Postman — то же значение, что у параметра этого запроса, не чужая корреляция.
+        return withoutBrace.replace("${" + name + "}", rendered);
     }
 
     private List<KeyValue> effectiveHeaders(Request req) {

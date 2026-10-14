@@ -33,7 +33,8 @@ class JmxBuilderTest {
                 new Intensity(10.0, 30, 60),
                 new Validation(true, 200, "\"token\""),
                 "ds1",
-                1
+                1,
+                null
         );
         // profile коррелирует с login (использует ${authToken}) -> та же группа
         Request profile = new Request(
@@ -52,7 +53,8 @@ class JmxBuilderTest {
                 new Intensity(10.0, 30, 60),
                 new Validation(true, 200, ""),
                 null,
-                3
+                1,
+                50
         );
         // независимый запрос -> отдельная группа
         Request search = new Request(
@@ -61,7 +63,8 @@ class JmxBuilderTest {
                 new Intensity(50.0, 20, 120),
                 new Validation(true, 200, ""),
                 null,
-                1
+                1,
+                null
         );
 
         Dataset ds = new Dataset("ds1", "Учётки", "auth.csv",
@@ -97,9 +100,13 @@ class JmxBuilderTest {
         // корреляция сохранена
         assertTrue(jmx.contains("Bearer ${authToken}"));
         assertTrue(jmx.contains("${__UUID()}"));
-        // repeat=3 у profile -> Loop Controller на 3 повтора
-        assertTrue(jmx.contains("<LoopController "));
-        assertTrue(jmx.contains(">3</stringProp>"));
+        // profile 50% -> Throughput Controller; smoke обходит его через IfController
+        assertTrue(jmx.contains("<ThroughputController "));
+        assertTrue(jmx.contains("ThroughputController.percentThroughput"));
+        assertTrue(jmx.contains(">50.0</value>"));
+        assertTrue(jmx.contains("ThroughputController.perThread\">true"));
+        assertEquals(2, countOccurrences(jmx, "<IfController "));
+        assertFalse(jmx.contains("<LoopController "));
         assertTrue(jmx.contains("<BackendListener "));
         assertTrue(jmx.contains(
                 "org.apache.jmeter.visualizers.backend.influxdb.InfluxdbBackendListenerClient"));
@@ -134,7 +141,8 @@ class JmxBuilderTest {
                 new Intensity(1.0, 1, 1),
                 Validation.defaults(),
                 null,
-                1
+                1,
+                null
         );
         Scenario s = new Scenario("q-test", SourceType.OPENAPI, "https://api.example.com",
                 LoadConfig.defaults(), List.of(), List.of(req), AutoStop.disabled(),
@@ -154,7 +162,7 @@ class JmxBuilderTest {
         Request req = new Request(
                 "q", 1, "GET list", "GET", "/items", null,
                 List.of(), List.of(), Body.none(), List.of(), List.of(),
-                new Intensity(1.0, 1, 1), Validation.defaults(), null, 1);
+                new Intensity(1.0, 1, 1), Validation.defaults(), null, 1, null);
         Scenario s = new Scenario("checkout", SourceType.OPENAPI, "https://api.example.com",
                 LoadConfig.defaults(), List.of(), List.of(req), AutoStop.disabled(), metrics);
         String jmx = builder.build(s);

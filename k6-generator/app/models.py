@@ -165,7 +165,11 @@ class AutoStop(BaseModel):
 
 
 class PrometheusConfig(BaseModel):
-    """JMeter InfluxdbBackendListenerClient → VictoriaMetrics. run_id ещё читает Gatling."""
+    """Поля блока «Метрики» на портале.
+
+    k6 читает influxdb_url, influxdb_token, application, measurement, percentiles, run_id.
+    samplers_reg_exp и summary_only остаются для JMeter: у remote write k6 таких ручек нет.
+    """
     exporter_port: int = 9001
     run_id: str = "1"
     samplers_reg_exp: str = ".*"
@@ -195,7 +199,8 @@ class Request(BaseModel):
     intensity: Intensity = Field(default_factory=Intensity)
     validation: Validation = Field(default_factory=Validation)
     dataset_id: Optional[str] = None
-    repeat: int = 1  # число повторов за итерацию потока (Loop Controller)
+    repeat: int = 1  # устарело: число повторов. Новые сборки шлют throughput и repeat=1
+    throughput: Optional[int] = None  # процент итераций группы, 1..100; пусто — вывести из repeat
 
 
 class TestMode(str, Enum):

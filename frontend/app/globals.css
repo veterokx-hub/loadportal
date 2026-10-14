@@ -556,6 +556,315 @@ a:hover {
   align-items: baseline;
 }
 
+/* ——— Секции формы: заголовок → короткий лид → поля → «Подробнее» ——— */
+.form-section {
+  margin-top: 16px;
+  padding: 16px 18px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 38%, transparent);
+}
+
+.form-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.panel .form-section-head h3 {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.form-section-aside {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-section-lead {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  max-width: 88ch;
+}
+
+.form-section-body {
+  margin-top: 10px;
+}
+
+.form-section .build-history {
+  margin: 0 0 12px;
+}
+
+.panel .form-section .build-history-head h3 {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* 12 колонок: поля задают ширину классом span-N, на узком экране — во всю строку. */
+.compact-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 10px 12px;
+  align-items: start;
+  margin-bottom: 10px;
+}
+
+.compact-grid > .field {
+  margin: 0;
+  min-width: 0;
+}
+
+.span-2 { grid-column: span 2; }
+.span-3 { grid-column: span 3; }
+.span-4 { grid-column: span 4; }
+.span-6 { grid-column: span 6; }
+.span-8 { grid-column: span 8; }
+.span-12 { grid-column: span 12; }
+
+.compact-grid label,
+.compact label {
+  margin-bottom: 4px;
+  font-size: 10.5px;
+}
+
+.compact-grid input,
+.compact-grid select,
+.compact input,
+.compact select {
+  padding: 7px 10px;
+  min-height: 34px;
+  font-size: 12.5px;
+}
+
+.compact-grid .num-field {
+  display: flex;
+  width: 100%;
+}
+
+.compact-grid .mono input,
+.compact-grid input.mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.check-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.check-inline input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--accent);
+  box-shadow: none;
+}
+
+.check-inline .muted {
+  font-weight: 500;
+}
+
+/* Чекбокс + поле в одну строку: «Общий ramp-up [ 60 ] с». */
+.toggle-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+}
+
+.toggle-field .num-field input {
+  width: 84px;
+  padding: 6px 8px;
+  min-height: 32px;
+  font-size: 12.5px;
+}
+
+.form-details {
+  margin: 4px 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.form-details > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 650;
+  color: var(--accent);
+  user-select: none;
+}
+
+.form-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.form-details > summary::before {
+  content: "›";
+  display: inline-block;
+  transition: transform var(--t);
+}
+
+.form-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.form-details ul {
+  margin: 8px 0 0;
+  padding-left: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 92ch;
+}
+
+.form-details code {
+  font-size: 11px;
+  padding: 1px 5px;
+}
+
+.csv-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.csv-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.csv-section > summary::before {
+  content: "›";
+  color: var(--accent);
+  font-size: 18px;
+  line-height: 1;
+  transition: transform var(--t);
+}
+
+.csv-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.csv-section > summary h2 {
+  margin: 0;
+  flex: none;
+}
+
+.csv-section[open] > summary {
+  margin-bottom: 14px;
+}
+
+.csv-data {
+  margin: 0 0 8px;
+  color: var(--text);
+}
+
+.csv-data > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 650;
+  user-select: none;
+}
+
+.csv-data > summary::-webkit-details-marker {
+  display: none;
+}
+
+.csv-data > summary::before {
+  content: "›";
+  color: var(--accent);
+  transition: transform var(--t);
+}
+
+.csv-data[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.csv-data-meta {
+  min-width: 0;
+  flex: 1;
+  font-weight: 450;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.csv-data textarea {
+  margin-top: 8px;
+}
+
+/* Плашки результата: успех / предупреждение. Ошибка — .error. */
+.notice {
+  margin-top: 12px;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  border-left: 4px solid var(--accent);
+}
+
+.notice.ok {
+  background: color-mix(in srgb, var(--ok) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+  border-left-color: var(--ok);
+}
+
+.notice.warn {
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+  border-left-color: var(--warn);
+}
+
+@media (max-width: 720px) {
+  .compact-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .compact-grid > .span-2,
+  .compact-grid > .span-3 {
+    grid-column: span 3;
+  }
+
+  .compact-grid > .span-4,
+  .compact-grid > .span-6,
+  .compact-grid > .span-8,
+  .compact-grid > .span-12 {
+    grid-column: span 6;
+  }
+
+  .form-section {
+    padding: 14px 14px 4px;
+  }
+}
+
 .step4-actions {
   flex-wrap: wrap;
   gap: 12px;
@@ -736,6 +1045,7 @@ a:hover {
   border-image: var(--accent-grad) 1;
 }
 
+/* Заголовок раздела — цвет текста: подписи полей (label) приглушённые, и уровни не сливаются. */
 .panel h3,
 .pulse-section h3,
 .docs-panel h3 {
@@ -743,7 +1053,7 @@ a:hover {
   font-weight: 800;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--text);
   margin: 18px 0 10px;
 }
 
@@ -1052,6 +1362,55 @@ tbody tr:hover {
   background: color-mix(in srgb, var(--accent) 6%, var(--surface));
 }
 
+tbody tr.req-drop > td {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+button.req-drag {
+  width: 22px;
+  height: 22px;
+  min-height: 0;
+  margin: 0 8px 0 0;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  cursor: grab;
+  vertical-align: middle;
+  opacity: 0.72;
+}
+
+button.req-drag svg {
+  display: block;
+  fill: currentColor;
+}
+
+button.req-drag:hover:not(:disabled) {
+  filter: none;
+  transform: none;
+  opacity: 1;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: none;
+}
+
+button.req-drag:active:not(:disabled) {
+  cursor: grabbing;
+  transform: none;
+  filter: none;
+  box-shadow: none;
+}
+
+button.req-drag:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.req-actions {
+  white-space: nowrap;
+}
+
 tbody tr:last-child td {
   border-bottom: none;
 }
@@ -1186,6 +1545,35 @@ select.method {
 .pill-source:hover {
   color: var(--text);
   border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+/* Переключатель-кнопка: снимаем градиент и «прыжок» глобального button. */
+button.pill-source {
+  min-height: 0;
+  overflow: visible;
+  font-family: inherit;
+  line-height: 1.3;
+  will-change: auto;
+}
+
+button.pill-source:hover:not(:disabled) {
+  filter: none;
+  transform: none;
+  box-shadow: var(--nm-out-sm);
+}
+
+button.pill-source.active,
+button.pill-source.active:hover:not(:disabled) {
+  box-shadow: var(--nm-in-sm), 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+button.pill-source:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+button.pill-engine {
+  align-items: flex-start;
+  text-align: left;
 }
 
 .pill-source.active {
@@ -1324,11 +1712,16 @@ code {
   width: 18px;
 }
 
-/* Панель действий над шагами сценария */
-.scenario-toolbar {
+.source-head {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.source-head h2 {
+  margin: 0;
 }
 
 /* Документация */
@@ -2146,18 +2539,6 @@ td > .num-field {
   margin: 0 0 10px;
 }
 
-.pulse-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.pulse-section-head h3 {
-  margin: 0;
-}
-
 .pulse-flow {
   display: flex;
   flex-wrap: wrap;
@@ -2246,6 +2627,23 @@ td > .num-field {
 
 .pulse-check.clickable {
   cursor: pointer;
+}
+
+.health-flash {
+  animation: health-flash 2.2s ease;
+}
+
+@keyframes health-flash {
+  0% {
+    outline: 2px solid var(--warn);
+    outline-offset: 3px;
+    background: color-mix(in srgb, var(--warn) 16%, transparent);
+  }
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: 3px;
+    background: transparent;
+  }
 }
 
 .pulse-check.clickable:hover {
@@ -2459,7 +2857,7 @@ td > .num-field {
   display: grid;
   grid-template-columns: minmax(120px, 0.9fr) minmax(220px, 1.6fr) 36px;
   gap: 10px;
-  align-items: center;
+  align-items: start;
   padding: 8px 12px;
   background: var(--surface);
 }
@@ -2524,6 +2922,25 @@ td > .num-field {
   font-weight: 700;
 }
 
+.param-warn {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+input.script-var,
+textarea.script-var,
+code.param-path-name.script-var {
+  background: color-mix(in srgb, var(--neon) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--neon) 42%, var(--border));
+  color: color-mix(in srgb, var(--neon) 24%, var(--text));
+}
+
+input.script-var:focus,
+textarea.script-var:focus {
+  border-color: color-mix(in srgb, var(--neon) 65%, var(--border));
+  box-shadow: var(--nm-in-sm), 0 0 0 3px color-mix(in srgb, var(--neon) 30%, transparent);
+}
+
 .param-source-cell {
   min-width: 0;
 }
@@ -2532,7 +2949,7 @@ td > .num-field {
   display: grid;
   grid-template-columns: 118px minmax(0, 1fr);
   gap: 8px;
-  align-items: end;
+  align-items: start;
   width: 100%;
 }
 
@@ -2547,7 +2964,7 @@ td > .num-field {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  align-items: flex-end;
+  align-items: flex-start;
   min-width: 0;
 }
 
@@ -2558,8 +2975,7 @@ td > .num-field {
   font-size: 12.5px;
 }
 
-.param-source-value > input:not(.narrow),
-.param-source-value > select.wide {
+.param-source-value > input:not(.narrow) {
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -2592,46 +3008,62 @@ td > .num-field {
 .param-gen-extras {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  align-items: flex-end;
+  gap: 6px 8px;
+  align-items: flex-start;
   min-width: 0;
 }
 
 .param-gen-slot {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 3px;
-  flex: 0 0 68px;
-  min-width: 64px;
+  flex: 0 0 64px;
+  width: 64px;
+  min-width: 0;
+  margin: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  font-size: inherit;
 }
 
-.param-gen-slot.wide {
-  flex: 1 1 140px;
-  min-width: 120px;
+.param-gen-slot.pattern {
+  flex: 0 0 calc(11ch + 1.3em);
+  width: calc(11ch + 1.3em);
 }
 
 .param-gen-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  padding-left: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--muted);
-  line-height: 1.1;
+  line-height: 1.3;
   white-space: nowrap;
 }
 
-.param-gen-slot .num-field,
+.param-gen-slot .num-field {
+  flex: none;
+  width: 100%;
+  height: auto;
+}
+
 .param-gen-slot .num-field input,
 .param-gen-slot input,
 .param-gen-slot select {
   width: 100%;
   min-height: 34px;
-}
-
-.param-gen-slot input,
-.param-gen-slot select {
   padding: 6px 8px;
   font-size: 12.5px;
+}
+
+.param-gen-slot > input,
+.param-gen-slot > select {
+  flex: none;
+  width: 100%;
+  min-width: 0;
 }
 
 .param-row-remove {
@@ -2709,9 +3141,14 @@ td > .num-field {
   color: var(--text);
 }
 
-.req-path-param {
-  color: var(--accent);
+.req-path-param.is-open {
+  color: var(--danger);
   font-weight: 700;
+}
+
+.req-path-param.is-bound {
+  color: var(--muted);
+  font-weight: 650;
 }
 
 .req-head-name {

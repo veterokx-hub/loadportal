@@ -20,9 +20,10 @@ public record Request(
         Intensity intensity,
         Validation validation,
         String datasetId,
-        int repeat
+        int repeat,
+        Integer throughput
 ) {
-    /** Число повторов запроса за одну итерацию потока (Loop Controller). */
+    /** Устаревшее число повторов. Новые сборки присылают throughput и repeat=1. */
     public int repeatOrOne() {
         return repeat > 0 ? repeat : 1;
     }

@@ -66,7 +66,7 @@ def _scenario(**load) -> ScenarioDraft:
                 name="order",
                 method="GET",
                 path="/order",
-                repeat=3,
+                throughput=40,
                 params=[
                     Param(
                         name="Authorization",
@@ -129,6 +129,8 @@ def test_simulation_honors_runner_contract():
 
     builders = _builders(java)
     assert "group0" in builders and "group0Smoke" in builders
+    assert 'throughput(session, "r2", 40)' in builders["group0"]
+    assert "throughput(session" not in builders["group0Smoke"]
     assert "group1" in builders and "group1Smoke" in builders
     for key, body in builders.items():
         if key.endswith("Smoke"):

@@ -4,9 +4,10 @@
  - каждая ГРУППА (union-find по корреляции ${var} и общему dataset_id) = отдельный
    k6-scenario с исполнителем ramping-arrival-rate;
  - target_rps группы — HTTP-сэмплы/с, как Throughput Shaping Timer. arrival-rate
-   = target_rps / сумма(repeat): одна итерация exec бьёт все запросы группы;
+   = target_rps / сумма(throughput/100): итерация выполняет запрос в заданной доле проходов;
  - ramp стартует с min(1, target_rps) HTTP/с (как TST), не с нуля;
- - repeat запроса = цикл внутри exec-функции;
+ - throughput — процент итераций (Throughput Controller, per thread). 100 — каждый проход.
+   В smoke запрос выполняется всегда, иначе threshold count>0 не увидит сэмпл;
  - корреляция (json/regex/boundary) кладётся в объект vars и подставляется дальше;
  - валидация (код ответа, contains) = check(); провал валидации или status=0
    идёт в portal_errors (как assertion JMeter), не в сырой http_req_failed;
@@ -15,6 +16,13 @@
  - датасеты = SharedArray (инлайн для небольших, внешний CSV для больших — гибрид).
 
 VU: preAllocatedVUs/maxVUs по закону Литтла (HTTP rps × assumed_latency × запас).
+
+Метрики VictoriaMetrics берутся из полей prometheus сценария. k6 1.0 шлёт их
+встроенным experimental-prometheus-rw, не Influx listener-ом JMeter:
+influxdb_url .../write?db= превращается в .../api/v1/write и пишется в vm.json
+рядом со script.js. Токен и percentiles — туда же. application, measurement
+и runId — теги options. LT_RUN_ID перекрывает runId. samplersRegex и
+summaryOnly в k6 нечему сопоставить, генератор их не пишет.
 
 Контракт CI (lt-run), локальный запуск без переменных остаётся load:
  - BASE_URL = __ENV.BASE_URL или scenario.base_url;
@@ -31,6 +39,7 @@ import json
 import math
 import os
 import re
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -47,6 +56,8 @@ from .models import (
 )
 
 VAR_RE = re.compile(r"\$\{([a-zA-Z0-9_]+)\}")
+# {name} и ${name}: второе приходит из Postman и закрывается параметром того же запроса.
+BRACE_RE = re.compile(r"\$?\{([A-Za-z0-9_]+)\}")
 INLINE_ROW_LIMIT = 2000  # больше — выносим CSV во внешний файл
 CONCURRENCY_SAFETY = 1.5
 # Тот же алфавит, что у JMeter __RandomString и Gatling-генератора.
@@ -106,6 +117,8 @@ class K6Result:
     filename: str  # базовое имя без расширения
     script: str
     data_files: list[GeneratedFile] = field(default_factory=list)
+    # Настройки вывода в VictoriaMetrics. main кладёт это в корень zip как vm.json.
+    vm_json: str = ""
 
     @property
     def is_zip(self) -> bool:
@@ -148,7 +161,26 @@ def _referenced_vars(req: Request) -> set[str]:
         vars_ |= set(VAR_RE.findall(req.body.content or ""))
     vars_ |= set(VAR_RE.findall(req.path or ""))
     vars_ |= set(VAR_RE.findall(req.url or ""))
+    vars_ -= _supplied_here(req)
     return vars_
+
+
+def _supplied_here(req: Request) -> set[str]:
+    """Имена, значение которых введено параметром этого же запроса."""
+    names: set[str] = set()
+    for p in req.params:
+        key = (p.name or "").strip()
+        if not key:
+            continue
+        kind = _param_source_kind(p.source)
+        if kind == "correlation":
+            continue
+        if kind == "constant" and not (_constant_text(p.source) or "").strip():
+            continue
+        if kind == "csv" and not (_csv_column(p.source) or "").strip():
+            continue
+        names.add(key)
+    return names
 
 
 def _group(scenario: ScenarioDraft) -> list[tuple[list[Request], list[str]]]:
@@ -246,16 +278,33 @@ def _rate(v: float) -> float | int:
     return r
 
 
-def _samples_per_iteration(members: list[Request]) -> int:
-    """Число HTTP-сэмплов за одну итерацию группы (сумма repeat)."""
-    return max(1, sum(max(1, r.repeat) for r in members))
+def _clamp_pct(value: int) -> int:
+    return max(1, min(100, int(value)))
 
 
-def _arrival_of(http_rps: float, samples: int) -> float:
+def _throughput_pct(req: Request, members: list[Request]) -> int:
+    """Процент проходов. Группа из одного запроса — всегда 100."""
+    if len(members) < 2:
+        return 100
+    if req.throughput is not None:
+        return _clamp_pct(req.throughput)
+    if any(r.throughput is not None for r in members):
+        return 100
+    top = max(max(1, r.repeat) for r in members)
+    return _clamp_pct(round(100 * max(1, req.repeat) / top))
+
+
+def _samples_per_iteration(members: list[Request]) -> float:
+    """Ожидаемое число HTTP-сэмплов за итерацию (сумма долей)."""
+    total = sum(_throughput_pct(r, members) / 100 for r in members)
+    return total if total > 0 else 1.0
+
+
+def _arrival_of(http_rps: float, samples: float) -> float:
     """HTTP RPS группы → k6 arrival-rate (старты exec/с)."""
     http = max(0.0, float(http_rps))
-    n = max(1, samples)
-    return http if n == 1 else http / n
+    n = samples if samples > 0 else 1.0
+    return http / n
 
 
 def _stages(
@@ -351,7 +400,29 @@ def _smoke_selector(name: str) -> str:
     return f'http_reqs{{name:"{escaped}"}}'
 
 
-def _emit_request(req: Request, request_name: str) -> list[str]:
+def _splice_braces(template: str, params: list, encode: bool) -> str:
+    """Собирает JS-выражение пути или тела. {name} с источником в текст не попадает."""
+    by_name = {p.name: p for p in params if getattr(p, "name", None)}
+    text = template or ""
+    parts: list[str] = []
+    pos = 0
+    for match in BRACE_RE.finditer(text):
+        if match.start() > pos:
+            parts.append(f"interp({json.dumps(text[pos:match.start()])}, vars, row)")
+        param = by_name.get(match.group(1))
+        if param is None:
+            parts.append(f"interp({json.dumps(match.group(0))}, vars, row)")
+        else:
+            expr = f"String({_param_expr(param)})"
+            parts.append(f"encodeURIComponent({expr})" if encode else expr)
+        pos = match.end()
+    tail = text[pos:]
+    if tail or not parts:
+        parts.append(f"interp({json.dumps(tail)}, vars, row)")
+    return " + ".join(parts)
+
+
+def _emit_request(req: Request, request_name: str, members: list[Request]) -> list[str]:
     L: list[str] = []
     ind = "    "
     path_params = [p for p in req.params if p.location == ParamLocation.PATH]
@@ -364,23 +435,20 @@ def _emit_request(req: Request, request_name: str) -> list[str]:
         and (req.body.content or "") != ""
     )
 
-    repeat = max(1, req.repeat)
-    open_loop = repeat > 1
+    pct = _throughput_pct(req, members)
+    gated = pct < 100
     base_ind = ind
-    if open_loop:
-        L.append(f"{ind}for (let _i = 0; _i < {repeat}; _i++) {{")
+    if gated:
+        L.append(f"{ind}if (allowThroughput({json.dumps(req.id)}, {pct})) {{")
         base_ind = ind + "  "
 
     L.append(f"{base_ind}{{")
     b = base_ind + "  "
     L.append(f"{b}// {_enum_str(req.method)} {req.name}")
     custom_url = (req.url or "").strip()
-    L.append(f"{b}let path = {json.dumps(custom_url or req.path or '/')};")
-    for p in path_params:
-        L.append(
-            f"{b}path = replaceBrace(path, {json.dumps(p.name)}, encodeURIComponent(String({_param_expr(p)})));"
-        )
-    L.append(f"{b}path = interp(path, vars, row);")
+    # {name} подставляется сразу: в тексте скрипта не остаётся плейсхолдера,
+    # если у параметра задан источник.
+    L.append(f"{b}let path = {_splice_braces(custom_url or req.path or '/', path_params, True)};")
 
     L.append(f"{b}const _q = [];")
     for qp in query_params:
@@ -410,12 +478,7 @@ def _emit_request(req: Request, request_name: str) -> list[str]:
             if p.location == ParamLocation.BODY and ("{" + p.name + "}") in (content or "")
         ]
         if body_params:
-            L.append(f"{b}let bodyTpl = {json.dumps(content)};")
-            for p in body_params:
-                L.append(
-                    f"{b}bodyTpl = replaceBrace(bodyTpl, {json.dumps(p.name)}, String({_param_expr(p)}));"
-                )
-            L.append(f"{b}const body = interp(bodyTpl, vars, row);")
+            L.append(f"{b}const body = {_splice_braces(content, body_params, False)};")
         else:
             L.append(f"{b}const body = interp({json.dumps(content)}, vars, row);")
         if req.body.content_type:
@@ -462,7 +525,7 @@ def _emit_request(req: Request, request_name: str) -> list[str]:
             L.append(f"{b}vars[{var}] = extractBoundary(res.body, {left}, {right}, {ex.match_no}, {dv});")
 
     L.append(f"{base_ind}}}")
-    if open_loop:
+    if gated:
         L.append(f"{ind}}}")
     return L
 
@@ -494,7 +557,7 @@ def _emit_exec(
     else:
         L.append("  const row = {};")
     for req in members:
-        L.extend(_emit_request(req, names.get(req.id) or req.name or "request"))
+        L.extend(_emit_request(req, names.get(req.id) or req.name or "request", members))
     L.append("}")
     return "\n".join(L)
 
@@ -601,6 +664,18 @@ function resolveToken(expr, vars, row) {
   return '';
 }
 
+const _tp = {};
+function allowThroughput(id, pct) {
+  if (SMOKE || pct >= 100) return true;
+  const s = _tp[id] || (_tp[id] = { n: 0, h: 0 });
+  s.n += 1;
+  if (s.h < (s.n * pct) / 100) {
+    s.h += 1;
+    return true;
+  }
+  return false;
+}
+
 function interp(tpl, vars, row) {
   if (tpl == null) return '';
   return String(tpl).replace(/\$\{([^}]+)\}/g, (_m, e) => resolveToken(e, vars, row));
@@ -670,6 +745,78 @@ function replaceBrace(tpl, name, value) {
 """.strip("\n")
 
 
+# --- VictoriaMetrics (prometheus remote write) --------------------------------------
+
+_DEFAULT_INFLUX_URL = "http://victoriametrics:8428/write?db=jmeter"
+
+
+def remote_write_url(influx_url: str) -> str:
+    """Influx /write портала → endpoint remote write, который умеет k6 1.0.
+
+    db= отбрасывается: у Prometheus remote write нет influx-базы.
+    Уже готовый /api/v1/write возвращается как есть.
+    """
+    raw = (influx_url or "").strip() or _DEFAULT_INFLUX_URL
+    if any(ch in raw for ch in "\r\n\x00"):
+        raise ValueError("Адрес VictoriaMetrics содержит перевод строки")
+    parts = urllib.parse.urlsplit(raw)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError("Адрес VictoriaMetrics должен быть http(s) URL")
+    if parts.username or parts.password:
+        raise ValueError("Логин в адресе VictoriaMetrics не поддерживается: укажите токен отдельно")
+    path = (parts.path or "").rstrip("/")
+    if path.endswith("/api/v1/write"):
+        return raw
+    if not path.endswith("/write"):
+        raise ValueError("Адрес VictoriaMetrics должен заканчиваться на /write или /api/v1/write")
+    new_path = path[: -len("/write")] + "/api/v1/write"
+    query = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True) if k != "db"]
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, new_path, urllib.parse.urlencode(query), ""))
+
+
+def trend_stats(percentiles: str) -> str:
+    """'99;95;90' → 'p(99),p(95),p(90)' для K6_PROMETHEUS_RW_TREND_STATS."""
+    source = (percentiles or "").strip() or "99;95;90"
+    stats: list[str] = []
+    for raw in source.split(";"):
+        item = raw.strip().rstrip("%")
+        if not item:
+            continue
+        if item.startswith("p(") and item.endswith(")") and item[2:-1].isdigit():
+            n = int(item[2:-1])
+        elif item.isdigit():
+            n = int(item)
+        else:
+            continue
+        if 0 < n < 100:
+            stat = f"p({n})"
+            if stat not in stats:
+                stats.append(stat)
+    if not stats:
+        raise ValueError("percentiles: нужны числа 1..99 через точку с запятой, например 99;95;90")
+    return ",".join(stats)
+
+
+def _plain(value: str, label: str) -> str:
+    text = value or ""
+    if any(ch in text for ch in "\r\n\x00"):
+        raise ValueError(f"{label} содержит перевод строки")
+    return text
+
+
+def victoria_payload(scenario: ScenarioDraft) -> dict[str, str]:
+    prom = scenario.prometheus
+    application = _plain(prom.application, "application").strip() or (scenario.name or "").strip() or "scenario"
+    return {
+        "server_url": remote_write_url(prom.influxdb_url),
+        "bearer_token": _plain(prom.influxdb_token, "Токен"),
+        "trend_stats": trend_stats(prom.percentiles),
+        "application": application,
+        "measurement": _plain(prom.measurement, "measurement").strip() or "jmeter",
+        "run_id": _plain(prom.run_id, "runId").strip() or "1",
+    }
+
+
 # --- Главная сборка -----------------------------------------------------------------
 
 def generate_k6(scenario: ScenarioDraft) -> K6Result:
@@ -695,6 +842,7 @@ def generate_k6(scenario: ScenarioDraft) -> K6Result:
             needs_papaparse = True
 
     request_names = _unique_request_names(scenario.requests)
+    victoria = victoria_payload(scenario)
 
     # options.scenarios: load — как раньше; smoke — 1 итерация/с на группу
     load_entries: list[str] = []
@@ -792,6 +940,11 @@ def generate_k6(scenario: ScenarioDraft) -> K6Result:
         "export const options = {",
         "  scenarios: LT_MODE === 'smoke' ? SMOKE_SCENARIOS : LOAD_SCENARIOS,",
         "  thresholds: LT_MODE === 'smoke' ? SMOKE_THRESHOLDS : LOAD_THRESHOLDS,",
+        "  tags: {",
+        f"    application: {json.dumps(victoria['application'])},",
+        f"    measurement: {json.dumps(victoria['measurement'])},",
+        f"    runId: __ENV.LT_RUN_ID || {json.dumps(victoria['run_id'])},",
+        "  },",
         "};",
     ]
 
@@ -805,10 +958,16 @@ def generate_k6(scenario: ScenarioDraft) -> K6Result:
         "// CI: LT_MODE=load|smoke, LT_SMOKE_DURATION_SEC, BASE_URL. "
         "Без переменных — load, base_url сценария."
     )
+    parts.append(
+        "// VictoriaMetrics: vm.json рядом со script.js (prometheus remote write). "
+        f"Адрес {victoria['server_url']}. "
+        "Теги application, measurement, runId — в options.tags. LT_RUN_ID перекрывает runId."
+    )
     parts.append("\n".join(imports))
     parts.append(
         f"const BASE_URL = __ENV.BASE_URL || {json.dumps(scenario.base_url or '')};\n"
         "const LT_MODE = __ENV.LT_MODE || 'load';\n"
+        "const SMOKE = LT_MODE === 'smoke';\n"
         "const SMOKE_SEC = parseInt(__ENV.LT_SMOKE_DURATION_SEC || '60', 10);\n"
         "if (LT_MODE !== 'load' && LT_MODE !== 'smoke') {\n"
         "  throw new Error('неизвестный LT_MODE=' + LT_MODE + ' (ожидается load или smoke)');\n"
@@ -824,8 +983,17 @@ def generate_k6(scenario: ScenarioDraft) -> K6Result:
     script = "\n\n".join(p for p in parts if p) + "\n"
 
     base_name = re.sub(r"[^a-zA-Z0-9_.-]", "_", scenario.name or "scenario") or "scenario"
+    vm_json = json.dumps(
+        {
+            "server_url": victoria["server_url"],
+            "bearer_token": victoria["bearer_token"],
+            "trend_stats": victoria["trend_stats"],
+        },
+        ensure_ascii=False,
+    )
     return K6Result(
         filename=base_name,
         script=script,
         data_files=_vendor_files(needs_papaparse) + data_files,
+        vm_json=vm_json,
     )

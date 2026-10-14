@@ -1,23 +1,71 @@
-import type { Intensity, LoadConfig, RequestModel } from "./types";
+import { groupRequests } from "./grouping";
+import type { Intensity, LoadConfig, RequestModel, Scenario } from "./types";
 
-/** HTTP-сэмплов за одну итерацию группы (сумма repeat). */
-export function samplesPerIteration(requests: Pick<RequestModel, "repeat">[]): number {
-  return Math.max(
-    1,
-    requests.reduce((n, r) => n + Math.max(1, r.repeat), 0)
+/** Процент выполнений запроса: 1..100. Пустое значение — 100. */
+export function throughputPercent(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value)) return 100;
+  return Math.min(100, Math.max(1, Math.round(value)));
+}
+
+/**
+ * Доля итерации каждого запроса (0..1).
+ * Один запрос в группе всегда 1: процент имеет смысл только для выравнивания внутри группы.
+ * Старые сборки без throughput: доля = repeat / max(repeat), максимум становится 100%.
+ */
+export function iterationWeights(
+  requests: Pick<RequestModel, "throughput" | "repeat">[]
+): number[] {
+  if (requests.length < 2) return requests.map(() => 1);
+  const explicit = requests.some((r) => r.throughput != null && Number.isFinite(r.throughput));
+  if (explicit) {
+    return requests.map((r) =>
+      r.throughput != null && Number.isFinite(r.throughput) ? throughputPercent(r.throughput) / 100 : 1
+    );
+  }
+  const top = Math.max(1, ...requests.map((r) => Math.max(1, r.repeat || 1)));
+  return requests.map(
+    (r) => Math.max(1, Math.min(100, Math.round((100 * Math.max(1, r.repeat || 1)) / top))) / 100
   );
 }
 
-/** k6 arrival-rate: старты exec/с, чтобы суммарный HTTP RPS = target. */
-export function arrivalRate(httpRps: number, samples: number): number {
-  const http = Math.max(0, httpRps);
-  const n = Math.max(1, samples);
-  return n === 1 ? http : http / n;
+/** Ожидаемое число HTTP-сэмплов за итерацию группы (сумма долей). */
+export function samplesPerIteration(
+  requests: Pick<RequestModel, "throughput" | "repeat">[]
+): number {
+  const sum = iterationWeights(requests).reduce((n, w) => n + w, 0);
+  return sum > 0 ? sum : 1;
 }
 
-/** Доля HTTP RPS запроса внутри группы (как TST: пропорционально repeat). */
-export function requestShareRps(groupHttpRps: number, repeat: number, samples: number): number {
-  return samples > 0 ? (Math.max(0, groupHttpRps) * Math.max(1, repeat)) / samples : 0;
+/** Проставляет throughput и гасит старый repeat, чтобы генераторы не читали его как цикл. */
+export function withThroughput(scenario: Scenario): RequestModel[] {
+  const groups = groupRequests(scenario);
+  const pct = new Map<string, number>();
+  for (const g of groups) {
+    if (g.requests.length < 2) {
+      for (const r of g.requests) pct.set(r.id, throughputPercent(r.throughput));
+      continue;
+    }
+    iterationWeights(g.requests).forEach((w, i) => {
+      pct.set(g.requests[i].id, Math.round(w * 100));
+    });
+  }
+  return scenario.requests.map((r) => ({
+    ...r,
+    throughput: pct.get(r.id) ?? throughputPercent(r.throughput),
+    repeat: 1,
+  }));
+}
+
+/** k6/Gatling: старты итераций/с, чтобы суммарный HTTP RPS = target. samples — сумма долей. */
+export function arrivalRate(httpRps: number, samples: number): number {
+  const http = Math.max(0, httpRps);
+  return samples > 0 ? http / samples : 0;
+}
+
+/** Доля HTTP RPS запроса внутри группы: пропорционально проценту выполнений. */
+export function requestShareRps(groupHttpRps: number, percent: number, samples: number): number {
+  if (!(samples > 0)) return 0;
+  return (Math.max(0, groupHttpRps) * (Math.max(0, percent) / 100)) / samples;
 }
 
 export interface ProfilePoint {

@@ -13,7 +13,8 @@
    (рандомизация интервалов — против «лестницы» синхронных стартов на длинном тесте);
  - поиск максимума: нативная лестница incrementUsersPerSec().times().eachLevelLasting()
    без рамп между ступенями — ровные полки, как у Throughput Shaping Timer;
- - repeat запроса = repeat(n).on(...);
+ - throughput — процент итераций виртуального пользователя (как Throughput Controller).
+   100 — каждый проход. Smoke-сценарий процент не применяет: каждый запрос идёт всегда;
  - корреляция: check(...).withDefault(...).saveAs(...) → EL #{var};
  - валидация: status().is(...) + substring(...).exists() (провал = KO запроса);
  - AutoStop: скользящее окно по ошибкам и среднему отклику + crashLoadGeneratorIf,
@@ -165,7 +166,26 @@ def _referenced_vars(req: Request) -> set[str]:
         vars_ |= set(VAR_RE.findall(req.body.content or ""))
     vars_ |= set(VAR_RE.findall(req.path or ""))
     vars_ |= set(VAR_RE.findall(req.url or ""))
+    vars_ -= _supplied_here(req)
     return vars_
+
+
+def _supplied_here(req: Request) -> set[str]:
+    """Имена, значение которых введено параметром этого же запроса."""
+    names: set[str] = set()
+    for p in req.params:
+        key = (p.name or "").strip()
+        if not key:
+            continue
+        kind = _param_source_kind(p.source)
+        if kind == "correlation":
+            continue
+        if kind == "constant" and not (_constant_text(p.source) or "").strip():
+            continue
+        if kind == "csv" and not (_csv_column(p.source) or "").strip():
+            continue
+        names.add(key)
+    return names
 
 
 def _group(scenario: ScenarioDraft) -> list[tuple[list[Request], list[str]]]:
@@ -222,14 +242,31 @@ def _group(scenario: ScenarioDraft) -> list[tuple[list[Request], list[str]]]:
     return groups
 
 
-def _samples_per_iteration(members: list[Request]) -> int:
-    return max(1, sum(max(1, r.repeat) for r in members))
+def _clamp_pct(value: int) -> int:
+    return max(1, min(100, int(value)))
 
 
-def _arrival_of(http_rps: float, samples: int) -> float:
+def _throughput_pct(req: Request, members: list[Request]) -> int:
+    """Процент проходов. Группа из одного запроса — всегда 100."""
+    if len(members) < 2:
+        return 100
+    if req.throughput is not None:
+        return _clamp_pct(req.throughput)
+    if any(r.throughput is not None for r in members):
+        return 100
+    top = max(max(1, r.repeat) for r in members)
+    return _clamp_pct(round(100 * max(1, req.repeat) / top))
+
+
+def _samples_per_iteration(members: list[Request]) -> float:
+    total = sum(_throughput_pct(r, members) / 100 for r in members)
+    return total if total > 0 else 1.0
+
+
+def _arrival_of(http_rps: float, samples: float) -> float:
     http = max(0.0, float(http_rps))
-    n = max(1, samples)
-    return http if n == 1 else http / n
+    n = samples if samples > 0 else 1.0
+    return http / n
 
 
 # --- Значения параметров -> Gatling EL ----------------------------------------------
@@ -294,10 +331,11 @@ def _param_el(p) -> str:
 
 
 def _replace_brace(text: str, name: str, value: str) -> str:
-    """{name} -> value, не задевая уже переведённые #{name} и ${name}."""
+    """{name} и ${name} -> value. #{name} уже переведён и не трогается."""
     if not text or not name:
         return text or ""
-    return re.sub(r"(?<![$#])\{" + re.escape(name) + r"\}", value.replace("\\", "\\\\"), text)
+    text = re.sub(r"(?<![$#])\{" + re.escape(name) + r"\}", value.replace("\\", "\\\\"), text)
+    return text.replace("${" + name + "}", value)
 
 
 # --- Рендер запроса -----------------------------------------------------------------
@@ -426,7 +464,8 @@ def _emit_request(req: Request, autostop: bool, indent: str, request_name: str) 
 
 def _emit_scenario(key: str, members: list[Request], ds_ids: list[str],
                    datasets: dict[str, Dataset], feeder_used: bool,
-                   autostop: bool, names: dict[str, str]) -> str:
+                   autostop: bool, names: dict[str, str],
+                   apply_throughput: bool) -> str:
     title = " -> ".join(m.name for m in members)
     L: list[str] = []
     L.append(f"    private final ScenarioBuilder {key} = scenario({_java(title)})")
@@ -439,13 +478,17 @@ def _emit_scenario(key: str, members: list[Request], ds_ids: list[str],
         L.append(f"        .feed(FEEDER_{_java_id(dsid).upper()})")
 
     for idx, req in enumerate(members):
-        repeat = max(1, req.repeat)
-        if repeat > 1:
-            L.append(f"        .repeat({repeat}).on(")
-            L.extend(_emit_request(req, autostop, "            ", names.get(req.id) or req.name))
+        pct = _throughput_pct(req, members)
+        name = names.get(req.id) or req.name
+        if apply_throughput and pct < 100:
+            L.append(f"        .exec(session -> throughput(session, {_java(req.id)}, {pct}))")
+            L.append(
+                f"        .doIf(session -> session.getBoolean({_java(req.id + '_run')})).then("
+            )
+            L.extend(_emit_request(req, autostop, "            ", name))
             L.append("        )")
         else:
-            body = _emit_request(req, autostop, "        ", names.get(req.id) or req.name)
+            body = _emit_request(req, autostop, "        ", name)
             # первый элемент цепочки — .exec(...), остальные уже с точкой
             body[0] = body[0].replace("exec(", ".exec(", 1)
             L.extend(body)
@@ -455,7 +498,7 @@ def _emit_scenario(key: str, members: list[Request], ds_ids: list[str],
 
 # --- Профиль инъекции ---------------------------------------------------------------
 
-def _injection(intensity, load, samples: int, indent: str) -> tuple[list[str], int]:
+def _injection(intensity, load, samples: float, indent: str) -> tuple[list[str], int]:
     """Аргументы injectOpen(...) + длительность профиля в секундах."""
     http_peak = max(0.0, float(intensity.target_rps))
     target = _arrival_of(http_peak, samples)
@@ -726,11 +769,13 @@ def generate_gatling(scenario: ScenarioDraft) -> GatlingResult:
             for p in m.params
         )
         scenario_blocks.append(
-            _emit_scenario(key, members, ds_ids, datasets, uses_feeder, autostop_on, request_names)
+            _emit_scenario(
+                key, members, ds_ids, datasets, uses_feeder, autostop_on, request_names, True
+            )
         )
         scenario_blocks.append(
             _emit_scenario(
-                key + "Smoke", members, ds_ids, datasets, uses_feeder, False, request_names
+                key + "Smoke", members, ds_ids, datasets, uses_feeder, False, request_names, False
             )
         )
         smoke_entries.append(
@@ -797,6 +842,19 @@ def generate_gatling(scenario: ScenarioDraft) -> GatlingResult:
         "            throw new IllegalArgumentException(\n"
         "                    \"неизвестный lt.mode=\" + MODE + \" (ожидается load или smoke)\");\n"
         "        }\n"
+        "    }\n"
+        "\n"
+        "    /** Доля итераций, как Throughput Controller per thread: счётчик на пользователя. */\n"
+        "    private static Session throughput(Session session, String id, int percent) {\n"
+        "        String nKey = id + \"_n\";\n"
+        "        String hKey = id + \"_h\";\n"
+        "        String rKey = id + \"_run\";\n"
+        "        int n = session.contains(nKey) ? session.getInt(nKey) + 1 : 1;\n"
+        "        int h = session.contains(hKey) ? session.getInt(hKey) : 0;\n"
+        "        boolean run = h < n * (percent / 100.0);\n"
+        "        Session next = session.set(nKey, n).set(rKey, run);\n"
+        "        if (run) next = next.set(hKey, h + 1);\n"
+        "        return next;\n"
         "    }"
     )
     if autostop_on:
@@ -978,7 +1036,7 @@ HTML-отчёт — в `target/gatling/<simulation>-<timestamp>/index.html`.
 | метка прогона | `runId` | раннер перекрывает `runDescription` |
 
 В smoke каждая группа идёт `constantUsersPerSec(1)` всю длительность: одна итерация
-проходит все запросы группы (repeat, корреляция, датасеты). Ramp, ступени и
+проходит все запросы группы (корреляция, датасеты), процент выполнений не применяется. Ramp, ступени и
 `loadFactor` не применяются, AutoStop выключен. Если запрос ни разу не выполнился,
 падает assertion `details(имя).allRequests().count().gt(0)`.
 

@@ -12,6 +12,7 @@ import {
 } from "react";
 import type { PrometheusConfig, RequestModel, Scenario } from "@/lib/types";
 import { consolidateRequestParams } from "@/lib/request-params";
+import { withThroughput } from "@/lib/profile";
 import { AUTH_EXPIRED_EVENT, login as apiLogin, logoutApi, validateSession } from "@/lib/api";
 import {
   clearMustChangePassword,
@@ -28,10 +29,10 @@ const STATE_KEY = "ltp-state-v1";
 const NOTICE_KEY = "ltp-session-expired";
 
 const SESSION_EXPIRED_NOTICE =
-  "Сессия истекла (3 часа). Сборка в историю не сохранялась — черновик сценария остался на этом устройстве. Войдите снова, чтобы продолжить.";
+  "Сессия истекла (она действует 3 ч). Черновик сценария остался в браузере — войдите снова, чтобы продолжить. Если в этот момент сохранялась сборка, сохраните её ещё раз.";
 
 const PASSWORD_CHANGED_NOTICE =
-  "Пароль изменён. Войдите снова — остальные сессии сброшены.";
+  "Пароль изменён, все сессии завершены. Войдите с новым паролем.";
 
 function markSessionExpiredNotice() {
   try {
@@ -101,7 +102,7 @@ function normalizeScenario(s: Scenario): Scenario {
     return id === r.id ? r : { ...r, id };
   });
   s = { ...s, requests: withIds };
-  return {
+  const normalized: Scenario = {
     ...s,
     load: s.load ?? {
       test_mode: "ramp_hold",
@@ -144,6 +145,7 @@ function normalizeScenario(s: Scenario): Scenario {
       })
     ),
   };
+  return { ...normalized, requests: withThroughput(normalized) };
 }
 
 interface PortalContextValue {

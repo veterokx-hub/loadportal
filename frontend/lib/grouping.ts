@@ -1,3 +1,4 @@
+import { valueInThisRequest } from "./request-params";
 import type { Intensity, RequestModel, Scenario } from "./types";
 
 export interface Group {
@@ -29,6 +30,9 @@ function referencedVars(req: RequestModel): Set<string> {
   scan(req.body?.content);
   scan(req.path);
   scan(req.url);
+  for (const name of vars) {
+    if (valueInThisRequest(req, name)) vars.delete(name);
+  }
   return vars;
 }
 

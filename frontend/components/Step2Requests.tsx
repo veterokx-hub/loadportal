@@ -1,8 +1,11 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RequestModel, Scenario } from "@/lib/types";
+import { healthMark, revealHealth, useHealthFocus } from "@/lib/health-focus";
 import { paramsFromTemplates, urlTemplate } from "@/lib/request-params";
+import { duplicateRequestName } from "@/lib/request-copy";
+import { stripHidden } from "@/lib/paste";
 
 const METHOD_PRESETS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -32,17 +35,27 @@ export function Step2Requests({
   const [newName, setNewName] = useState("");
   const scenarioRef = useRef(scenario);
   scenarioRef.current = scenario;
+  const health = useHealthFocus();
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropId, setDropId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!health || health.step !== 1) return;
+    const timer = window.setTimeout(() => revealHealth(health), 50);
+    return () => window.clearTimeout(timer);
+  }, [health]);
   const paramTimers = useRef<Record<string, number>>({});
 
-  function syncParams(id: string) {
+  function syncParams(id: string, address?: { path?: string; url?: string | null }) {
     const r = scenarioRef.current.requests.find((x) => x.id === id);
     if (!r) return;
+    const merged = address ? { ...r, ...address } : r;
     const next = paramsFromTemplates(
-      urlTemplate(r),
-      r.body?.content ?? "",
+      urlTemplate(merged),
+      merged.body?.content ?? "",
       r.params
     );
-    patch(id, { params: next });
+    patch(id, { ...address, params: next });
   }
 
   function scheduleParamSync(id: string) {
@@ -50,18 +63,28 @@ export function Step2Requests({
     paramTimers.current[id] = window.setTimeout(() => syncParams(id), 450);
   }
 
-  function flushParamSync(id: string) {
+  function flushParamSync(id: string, address?: { path?: string; url?: string | null }) {
     window.clearTimeout(paramTimers.current[id]);
-    syncParams(id);
+    syncParams(id, address);
+  }
+
+  function list(): RequestModel[] {
+    return [...scenarioRef.current.requests].sort((a, b) => a.order - b.order);
+  }
+
+  function commit(nextRequests: RequestModel[]) {
+    const next = { ...scenarioRef.current, requests: nextRequests };
+    scenarioRef.current = next;
+    setScenario(next);
   }
 
   function addRequest() {
     const path = newPath.trim() || "/";
     const method = newMethod.trim().toUpperCase() || "GET";
-    const id = `custom_${Date.now().toString(36)}`;
+    const current = list();
     const req: RequestModel = {
-      id,
-      order: requests.length + 1,
+      id: `custom_${Date.now().toString(36)}`,
+      order: current.length + 1,
       name: newName.trim() || `${method} ${path}`,
       method,
       path,
@@ -74,30 +97,62 @@ export function Step2Requests({
       validation: { check_response_code: true, expected_status: 200, response_contains: "" },
       dataset_id: null,
       repeat: 1,
+      throughput: 100,
     };
-    setScenario({ ...scenario, requests: [...scenario.requests, req] });
+    commit([...current, req]);
     setNewName("");
     setNewPath("/");
   }
 
   function remove(id: string) {
-    const filtered = requests
-      .filter((r) => r.id !== id)
-      .map((r, i) => ({ ...r, order: i + 1 }));
-    setScenario({ ...scenario, requests: filtered });
+    commit(list().filter((r) => r.id !== id).map((r, i) => ({ ...r, order: i + 1 })));
+  }
+
+  function duplicate(id: string) {
+    const current = list();
+    const idx = current.findIndex((r) => r.id === id);
+    if (idx < 0) return;
+    const src = current[idx];
+    const copy: RequestModel = {
+      ...structuredClone(src),
+      id: `custom_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      name: duplicateRequestName(src.name, current.map((r) => r.name)),
+    };
+    const next = [...current.slice(0, idx + 1), copy, ...current.slice(idx + 1)].map((r, i) => ({
+      ...r,
+      order: i + 1,
+    }));
+    commit(next);
+  }
+
+  function move(fromId: string, toId: string) {
+    if (!fromId || fromId === toId) return;
+    const current = list();
+    const from = current.findIndex((r) => r.id === fromId);
+    const to = current.findIndex((r) => r.id === toId);
+    if (from < 0 || to < 0) return;
+    const next = [...current];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+    commit(next.map((r, i) => ({ ...r, order: i + 1 })));
   }
 
   function patch(id: string, p: Partial<RequestModel>) {
-    setScenario({
-      ...scenario,
-      requests: scenario.requests.map((r) => (r.id === id ? { ...r, ...p } : r)),
-    });
+    // setScenario подменяет объект целиком. Таймер параметров иначе пишет
+    // сценарий прошлого рендера и стирает путь, набранный после него.
+    const current = scenarioRef.current;
+    const next = {
+      ...current,
+      requests: current.requests.map((r) => (r.id === id ? { ...r, ...p } : r)),
+    };
+    scenarioRef.current = next;
+    setScenario(next);
   }
 
   return (
     <div className="panel">
-      <h2>2. Запросы сценария</h2>
-      <div className="field">
+      <h2>2. Запросы</h2>
+      <div className="field" data-health={healthMark("base-url")}>
         <label>Базовый URL</label>
         <input
           value={scenario.base_url}
@@ -105,8 +160,8 @@ export function Step2Requests({
           placeholder="https://api.example.com"
         />
         <div className="hint">
-          Домен/протокол/порт попадут в HTTP Request Defaults, путь — в начало
-          каждого запроса.
+          Общий адрес для всех запросов. Путь из него (например, <code>/api</code>) добавится
+          перед путём каждого запроса.
         </div>
       </div>
 
@@ -114,17 +169,60 @@ export function Step2Requests({
       <table>
         <thead>
           <tr>
-            <th style={{ width: 40 }}>#</th>
+            <th style={{ width: 72 }}>#</th>
             <th style={{ width: 100 }}>Метод</th>
             <th>Имя / путь</th>
             <th style={{ width: 90 }}>Параметры</th>
-            <th style={{ width: 60 }} />
+            <th style={{ width: 88 }} />
           </tr>
         </thead>
         <tbody>
           {requests.map((r) => (
-            <tr key={r.id}>
-              <td className="muted">{r.order}</td>
+            <tr
+              key={r.id}
+              data-health={healthMark("request-path", r.id)}
+              className={dropId === r.id && dragId !== r.id ? "req-drop" : undefined}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                if (dropId !== r.id) setDropId(r.id);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const fromId = e.dataTransfer.getData("text/plain") || dragId || "";
+                move(fromId, r.id);
+                setDragId(null);
+                setDropId(null);
+              }}
+            >
+              <td className="muted req-order">
+                <button
+                  type="button"
+                  className="req-drag"
+                  draggable
+                  title="Перетащить, чтобы изменить порядок"
+                  aria-label="Изменить порядок"
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/plain", r.id);
+                    e.dataTransfer.effectAllowed = "move";
+                    setDragId(r.id);
+                  }}
+                  onDragEnd={() => {
+                    setDragId(null);
+                    setDropId(null);
+                  }}
+                >
+                  <svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true">
+                    <circle cx="2" cy="2" r="1.2" />
+                    <circle cx="8" cy="2" r="1.2" />
+                    <circle cx="2" cy="7" r="1.2" />
+                    <circle cx="8" cy="7" r="1.2" />
+                    <circle cx="2" cy="12" r="1.2" />
+                    <circle cx="8" cy="12" r="1.2" />
+                  </svg>
+                </button>
+                {r.order}
+              </td>
               <td>
                 <select
                   className={`method ${r.method}`}
@@ -152,7 +250,10 @@ export function Step2Requests({
                     patch(r.id, { path: e.target.value });
                     scheduleParamSync(r.id);
                   }}
-                  onBlur={() => flushParamSync(r.id)}
+                  onBlur={(e) => {
+                    const path = stripHidden(e.target.value).trim();
+                    flushParamSync(r.id, path === r.path ? undefined : { path });
+                  }}
                 />
                 <input
                   style={{ marginTop: 4, fontFamily: "monospace", fontSize: 12 }}
@@ -162,18 +263,37 @@ export function Step2Requests({
                     patch(r.id, { url: e.target.value || null });
                     scheduleParamSync(r.id);
                   }}
-                  onBlur={() => flushParamSync(r.id)}
+                  onBlur={(e) => {
+                    const url = stripHidden(e.target.value).trim();
+                    const next = url || null;
+                    flushParamSync(r.id, next === (r.url ?? null) ? undefined : { url: next });
+                  }}
                 />
                 <div className="hint">
-                  Параметры в <code>{"{...}"}</code> распознаются автоматически. Собственный URL
-                  переопределяет базовый URL и путь для этого запроса.
+                  Параметры в <code>{"{…}"}</code> распознаются автоматически. Собственный URL
+                  заменяет базовый URL и путь.
                 </div>
               </td>
               <td>
                 <span className="tag">{r.params.length}</span>
               </td>
-              <td>
-                <button className="ghost small" onClick={() => remove(r.id)} title="Удалить">
+              <td className="req-actions">
+                <button
+                  type="button"
+                  className="ghost small"
+                  onClick={() => duplicate(r.id)}
+                  title="Дублировать запрос"
+                  aria-label="Дублировать запрос"
+                >
+                  ⧉
+                </button>
+                <button
+                  type="button"
+                  className="ghost small"
+                  onClick={() => remove(r.id)}
+                  title="Удалить запрос"
+                  aria-label="Удалить запрос"
+                >
                   ✕
                 </button>
               </td>
@@ -184,10 +304,12 @@ export function Step2Requests({
       </div>
 
       {requests.length === 0 && (
-        <div className="hint">В спецификации не найдено запросов — добавьте свой ниже.</div>
+        <div className="hint">Запросов нет — добавьте первый ниже.</div>
       )}
 
-      <h3 style={{ fontSize: 13, margin: "18px 0 8px" }}>Добавить свой запрос</h3>
+      <h3 style={{ fontSize: 13, margin: "18px 0 8px" }} data-health={healthMark("add-request")}>
+        Добавить запрос
+      </h3>
       <div className="inline" style={{ flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}>
         <div className="field" style={{ marginBottom: 0, width: 120 }}>
           <label>Метод</label>

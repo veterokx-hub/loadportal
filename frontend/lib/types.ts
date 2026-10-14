@@ -84,7 +84,10 @@ export interface RequestModel {
   intensity: Intensity;
   validation: Validation;
   dataset_id?: string | null;
+  /** Устаревшее: раньше число повторов за итерацию. Генераторы читают throughput. */
   repeat: number;
+  /** Процент итераций группы, в которых запрос выполняется. 100 — каждый проход. */
+  throughput?: number;
 }
 
 export interface Dataset {

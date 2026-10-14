@@ -1,6 +1,20 @@
 import { groupIntensity, groupRequests } from "./grouping";
-import { uiParams } from "./request-params";
+import {
+  PARAM_LOCATION_LABEL,
+  bracesIn,
+  uiParams,
+  valueInThisRequest,
+} from "./request-params";
+import {
+  clashHint,
+  clashMessage,
+  gatlingScriptName,
+  scriptVarClashes,
+  scriptWriters,
+} from "./script-vars";
+import { plural } from "./plural";
 import { formatRps, totalDuration } from "./profile";
+import type { HealthFocus } from "./health-focus";
 import type { ParamSource, RequestModel, Scenario } from "./types";
 
 export type CheckSeverity = "error" | "warning" | "tip" | "ok";
@@ -12,6 +26,8 @@ export interface ReadinessCheck {
   hint?: string;
   step?: number;
   requestId?: string;
+  /** Куда прокрутить экран шага, чтобы поправить это сообщение. */
+  focus?: Omit<HealthFocus, "token">;
 }
 
 export interface FlowNode {
@@ -56,8 +72,26 @@ function varsFromPrior(requests: RequestModel[], beforeOrder: number): Set<strin
   const out = new Set<string>();
   requests
     .filter((r) => r.order < beforeOrder)
-    .forEach((r) => r.extractions.forEach((e) => e.variable && out.add(e.variable)));
+    .forEach((r) =>
+      r.extractions.forEach((e) => {
+        const name = e.variable.trim();
+        if (name) out.add(name);
+      })
+    );
   return out;
+}
+
+/** {param2} в адресе и ${param} в корреляции — разные имена, их легко спутать. */
+function braceLookalike(req: RequestModel, variable: string): string | null {
+  const names = [
+    ...bracesIn(req.path ?? ""),
+    ...bracesIn(req.url ?? ""),
+    ...bracesIn(req.body?.content ?? ""),
+  ];
+  return (
+    names.find((n) => n !== variable && (n.startsWith(variable) || variable.startsWith(n))) ??
+    null
+  );
 }
 
 function referencedVars(req: RequestModel): Set<string> {
@@ -69,7 +103,10 @@ function referencedVars(req: RequestModel): Set<string> {
     while ((m = VAR_RE.exec(text)) !== null) vars.add(m[1]);
   };
   req.params.forEach((p) => {
-    if (p.source.kind === "correlation") vars.add(p.source.variable);
+    if (p.source.kind === "correlation") {
+      const name = p.source.variable.trim();
+      if (name) vars.add(name);
+    }
     else if (p.source.kind === "constant") scan(p.source.value);
   });
   scan(req.body?.content);
@@ -161,6 +198,40 @@ function countCorrelationChains(edges: FlowEdge[]): number {
   return chains;
 }
 
+function place(
+  step: number,
+  focusPlace: HealthFocus["place"],
+  extra: Partial<Omit<HealthFocus, "token" | "step" | "place">> = {}
+): { step: number; focus: Omit<HealthFocus, "token"> } {
+  return { step, focus: { step, place: focusPlace, ...extra } };
+}
+
+/** Где в сценарии встречается ${name}: параметр, тело или путь. */
+function varFocus(
+  req: RequestModel,
+  name: string,
+  requests: RequestModel[]
+): { step: number; focus: Omit<HealthFocus, "token"> } {
+  const needle = "${" + name + "}";
+  const param = req.params.find((p) => {
+    if (p.source.kind === "constant") return p.source.value.includes(needle);
+    if (p.source.kind === "correlation") return p.source.variable.trim() === name;
+    return false;
+  });
+  if (param) {
+    return place(2, "param", { requestId: req.id, location: param.location, name: param.name });
+  }
+  if ((req.body?.content ?? "").includes(needle)) {
+    return place(2, "body", { requestId: req.id, name });
+  }
+  if ((req.path ?? "").includes(needle) || (req.url ?? "").includes(needle)) {
+    return place(1, "request-path", { requestId: req.id });
+  }
+  const prev = [...requests].reverse().find((r) => r.order < req.order);
+  if (prev) return place(2, "extract", { requestId: prev.id, name });
+  return place(2, "param", { requestId: req.id });
+}
+
 export function analyzeScenario(scenario: Scenario): ReadinessReport {
   const checks: ReadinessCheck[] = [];
   const requests = [...scenario.requests].sort((a, b) => a.order - b.order);
@@ -178,7 +249,7 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
       severity: "error",
       message: "В сценарии нет запросов",
       hint: "Импортируйте OpenAPI/Postman или добавьте запрос вручную",
-      step: 1,
+      ...place(1, "add-request"),
     });
   }
 
@@ -189,7 +260,7 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
       severity: "warning",
       message: "Не задан базовый URL",
       hint: "Укажите домен на шаге «Запросы» или собственный URL у каждого запроса",
-      step: 1,
+      ...place(1, "base-url"),
     });
   }
 
@@ -199,25 +270,43 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
   requests.forEach((req) => {
     const vars = req.extractions.map((e) => e.variable).filter(Boolean);
     extractedByReq.set(req.id, vars);
-    const seen = new Set<string>();
     vars.forEach((v) => {
-      if (seen.has(v)) {
-        add({
-          id: `dup-ext-${req.id}-${v}`,
-          severity: "warning",
-          message: `«${req.name}»: переменная «${v}» извлекается дважды`,
-          step: 2,
-          requestId: req.id,
-        });
-      }
-      seen.add(v);
       if (!allExtracted.has(v)) allExtracted.set(v, { reqId: req.id, order: req.order });
+    });
+  });
+
+  const writers = scriptWriters(scenario);
+  scriptVarClashes(writers).forEach((c) => {
+    c.writers.forEach((w, i) => {
+      add({
+        id: `svar-${c.name}-${i}`,
+        severity: "warning",
+        message: clashMessage(c),
+        hint: clashHint(c),
+        requestId: w.focus.requestId,
+        step: w.focus.step,
+        focus: w.focus,
+      });
+    });
+  });
+  writers.forEach((w, i) => {
+    const renamed = gatlingScriptName(w.name);
+    if (renamed === w.name) return;
+    add({
+      id: `svar-gatling-${i}-${w.name}`,
+      severity: "warning",
+      message: `Имя «${w.name}» в Gatling станет «${renamed}». В JMeter и k6 останется «${w.name}». (Gatling)`,
+      hint: "Латинские буквы и цифры, первая — буква. Иначе Gatling переименует переменную",
+      requestId: w.focus.requestId,
+      step: w.focus.step,
+      focus: w.focus,
     });
   });
 
   requests.forEach((req) => {
     const prior = varsFromPrior(requests, req.order);
     const fromCsv = csvProvidedVars(req, scenario);
+    const reportedCorr = new Set<string>();
 
     uiParams(req).forEach((p) => {
       if (p.required && sourceEmpty(p.source)) {
@@ -225,24 +314,54 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
           id: `req-param-${req.id}-${p.location}-${p.name}`,
           severity: "error",
           message: `«${req.name}»: не заполнен обязательный параметр ${p.name}`,
-          hint: `Параметр ${p.location} · ${p.name}`,
-          step: 2,
+          hint: `Шаг «Корреляция и параметры», вкладка ${PARAM_LOCATION_LABEL[p.location] ?? p.location}`,
           requestId: req.id,
+          ...place(2, "param", { requestId: req.id, location: p.location, name: p.name }),
         });
       }
-      if (
-        p.source.kind === "correlation" &&
-        !prior.has(p.source.variable) &&
-        !fromCsv.has(p.source.variable)
-      ) {
-        add({
-          id: `corr-${req.id}-${p.source.variable}`,
-          severity: "error",
-          message: `«${req.name}»: корреляция \${${p.source.variable}} без извлечения выше`,
-          hint: "Добавьте JSONPath/Regex на предыдущем запросе",
-          step: 2,
+      if (p.source.kind === "correlation") {
+        const variable = p.source.variable.trim();
+        const loc = PARAM_LOCATION_LABEL[p.location] ?? p.location;
+        const who = `параметр «${p.name.trim() || "без имени"}» (${loc})`;
+        const focus = place(2, "param", {
           requestId: req.id,
+          location: p.location,
+          name: p.name.trim(),
         });
+        if (!variable) {
+          add({
+            id: `corr-${req.id}-${p.location}-${p.name}-empty`,
+            severity: "error",
+            message: `«${req.name}»: ${who} — источник «Корреляция», переменная не выбрана`,
+            hint: "Выберите переменную из предыдущего запроса или смените источник",
+            requestId: req.id,
+            ...focus,
+          });
+        } else if (!prior.has(variable) && !fromCsv.has(variable)) {
+          reportedCorr.add(variable);
+          const same = req.extractions.some((e) => e.variable.trim() === variable);
+          const later = requests.some(
+            (r) =>
+              r.order > req.order &&
+              r.extractions.some((e) => e.variable.trim() === variable)
+          );
+          const lookalike = braceLookalike(req, variable);
+          const hint = same
+            ? "Извлечение на этом же запросе заполняется из ответа и в этот запрос не подставляется"
+            : later
+              ? "Извлечение стоит ниже по сценарию — к моменту этого запроса переменной ещё нет"
+              : lookalike
+                ? `{${lookalike}} в адресе и \${${variable}} — разные имена. Это источник параметра «${p.name.trim()}», не плейсхолдер пути`
+                : "Смените источник этого параметра или добавьте извлечение с тем же именем в предыдущий запрос";
+          add({
+            id: `corr-${req.id}-${variable}`,
+            severity: "error",
+            message: `«${req.name}»: ${who} берёт \${${variable}}, выше её никто не извлекает`,
+            hint,
+            requestId: req.id,
+            ...focus,
+          });
+        }
       }
       if (p.source.kind === "csv" && p.source.column) {
         const ds = scenario.datasets.find((d) => d.id === req.dataset_id);
@@ -251,16 +370,16 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
             id: `csv-no-ds-${req.id}-${p.name}`,
             severity: "warning",
             message: `«${req.name}»: CSV-колонка «${p.source.column}» без привязанного датасета`,
-            step: 2,
             requestId: req.id,
+            ...place(2, "dataset", { requestId: req.id }),
           });
         } else if (!ds.columns.includes(p.source.column)) {
           add({
             id: `csv-col-${req.id}-${p.name}`,
             severity: "error",
-            message: `«${req.name}»: колонка «${p.source.column}» отсутствует в «${ds.name}»`,
-            step: 2,
+            message: `«${req.name}»: в датасете «${ds.name}» нет колонки «${p.source.column}»`,
             requestId: req.id,
+            ...place(2, "datasets", { name: ds.id }),
           });
         }
       }
@@ -268,13 +387,14 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
 
     referencedVars(req).forEach((v) => {
       // CSV Data Set / колонка параметра уже даёт ${v} в рантайме — это не блокер.
-      if (prior.has(v) || fromCsv.has(v)) return;
+      // Значение, введённое параметром этого же запроса (строка под телом), тоже.
+      if (prior.has(v) || fromCsv.has(v) || reportedCorr.has(v) || valueInThisRequest(req, v)) return;
       add({
         id: `var-${req.id}-${v}`,
         severity: "error",
         message: `«${req.name}»: переменная \${${v}} не извлечена ранее`,
-        step: 2,
         requestId: req.id,
+        ...varFocus(req, v, requests),
       });
     });
   });
@@ -291,9 +411,9 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
             id: `orphan-${req.id}-${e.variable}`,
             severity: "warning",
             message: `«${req.name}»: \${${e.variable}} извлекается, но не используется`,
-            hint: "Проверьте корреляцию в следующих запросах",
-            step: 2,
+            hint: "Используйте её в следующих запросах или удалите извлечение",
             requestId: req.id,
+            ...place(2, "extract", { requestId: req.id, name: e.variable }),
           });
         }
       }
@@ -310,8 +430,8 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
     add({
       id: "zero-rps",
       severity: "error",
-      message: "Суммарная целевая интенсивность равна 0 RPS",
-      step: 3,
+      message: "Суммарная интенсивность — 0 RPS",
+      ...place(3, "intensity"),
     });
   }
 
@@ -320,8 +440,8 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
       id: "autostop-off",
       severity: "tip",
       message: "AutoStop выключен — тест не остановится при деградации",
-      hint: "Включите на шаге «Интенсивность» для безопасного прогона",
-      step: 3,
+      hint: "Включите на шаге «Интенсивность и сборка»",
+      ...place(3, "autostop"),
     });
   }
 
@@ -329,8 +449,8 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
     add({
       id: "high-rps",
       severity: "tip",
-      message: `Высокая нагрузка: пик ${peakRps} RPS — убедитесь, что стенд выдержит`,
-      step: 3,
+      message: `Высокая нагрузка: пик ${formatRps(peakRps)} RPS — убедитесь, что стенд выдержит`,
+      ...place(3, "intensity"),
     });
   }
 
@@ -369,22 +489,24 @@ export function analyzeScenario(scenario: Scenario): ReadinessReport {
   const host = scenario.base_url.trim() || "целевой API";
   const mode =
     scenario.load.test_mode === "max_search"
-      ? `поиск максимума (${scenario.load.steps} ступеней)`
+      ? `поиск максимума (ступеней: ${scenario.load.steps})`
       : "ramp-hold";
   const pitch =
     requests.length === 0
-      ? "Сценарий пуст — импортируйте спецификацию, чтобы начать."
-      : `Нагрузочный сценарий «${scenario.name}»: ${requests.length} запросов к ${host}, ` +
+      ? "Сценарий пуст — импортируйте спецификацию или добавьте запросы."
+      : `Нагрузочный сценарий «${scenario.name}» (${host}): запросов — ${requests.length}, ` +
         `пик ${formatRps(peakRps)} RPS, длительность ~${formatDuration(durationSec)}, режим ${mode}` +
-        (chainCount > 0 ? `, ${chainCount} цепоч${chainCount === 1 ? "ка" : chainCount < 5 ? "ки" : "ек"} корреляции` : "") +
+        (chainCount > 0
+          ? `, ${chainCount} ${plural(chainCount, "цепочка", "цепочки", "цепочек")} корреляции`
+          : "") +
         ".";
 
   if (blockers === 0 && warnings === 0 && requests.length > 0) {
     checks.unshift({
       id: "all-good",
       severity: "ok",
-      message: "Критических замечаний нет — можно собирать артефакт",
-      step: 3,
+      message: "Ошибок и предупреждений нет — можно собирать",
+      ...place(3, "intensity"),
     });
   }
 

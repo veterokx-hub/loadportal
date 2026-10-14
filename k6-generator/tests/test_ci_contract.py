@@ -1,6 +1,7 @@
 """Скрипт k6 читает контракт lt-run и сам проверяет покрытие smoke."""
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import tempfile
@@ -8,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from app.k6_generator import generate_k6
+from app.k6_generator import generate_k6, remote_write_url, trend_stats
 from app.models import (
     AutoStop,
     CorrelationSource,
@@ -18,6 +19,7 @@ from app.models import (
     ExtractionType,
     Param,
     ParamLocation,
+    PrometheusConfig,
     Request,
     ScenarioDraft,
     SourceType,
@@ -62,7 +64,7 @@ def _scenario() -> ScenarioDraft:
                 name="order",
                 method="GET",
                 path="/order",
-                repeat=3,
+                throughput=40,
                 params=[
                     Param(
                         name="Authorization",
@@ -104,6 +106,8 @@ def test_script_honors_runner_contract():
     assert "rate: 1" in script
     assert "export function g0()" in script
     assert "export function g1()" in script
+    assert 'if (allowThroughput("r2", 40))' in script
+    assert "if (SMOKE || pct >= 100) return true;" in script
     assert "throw new Error(" in script
     assert "LT_MODE === 'smoke' ? SMOKE_SCENARIOS : LOAD_SCENARIOS" in script
 
@@ -126,6 +130,44 @@ def test_script_honors_runner_contract():
             assert "https://" not in stripped
     assert "jslib.k6.io" not in script
     assert "export default function" not in script
+    assert 'application: "ci-contract"' in script
+    assert 'measurement: "jmeter"' in script
+    assert 'runId: __ENV.LT_RUN_ID || "1"' in script
+
+    result = generate_k6(_scenario())
+    vm = json.loads(result.vm_json)
+    assert vm["server_url"] == "http://victoriametrics:8428/api/v1/write"
+    assert vm["bearer_token"] == ""
+    assert vm["trend_stats"] == "p(99),p(95),p(90)"
+    assert "secret" not in result.script
+
+
+def test_victoria_fields_from_portal():
+    scenario = _scenario()
+    scenario.prometheus = PrometheusConfig(
+        influxdb_url="https://vm.internal:8428/write?db=jmeter&precision=ns",
+        influxdb_token="s3cret",
+        application="payments",
+        measurement="k6",
+        percentiles="95;99",
+        run_id="42",
+    )
+    result = generate_k6(scenario)
+    vm = json.loads(result.vm_json)
+    assert vm["server_url"] == "https://vm.internal:8428/api/v1/write?precision=ns"
+    assert vm["bearer_token"] == "s3cret"
+    assert vm["trend_stats"] == "p(95),p(99)"
+    assert 'application: "payments"' in result.script
+    assert 'measurement: "k6"' in result.script
+    assert 'runId: __ENV.LT_RUN_ID || "42"' in result.script
+    assert "s3cret" not in result.script
+
+
+def test_remote_write_url_keeps_native_endpoint():
+    assert remote_write_url("http://vm:8428/api/v1/write") == "http://vm:8428/api/v1/write"
+    assert trend_stats("") == "p(99),p(95),p(90)"
+    with pytest.raises(ValueError):
+        remote_write_url("http://vm:8428/influx")
 
 
 @pytest.mark.skipif(shutil.which("k6") is None, reason="k6 не установлен")

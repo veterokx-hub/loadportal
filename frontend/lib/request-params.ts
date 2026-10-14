@@ -8,6 +8,31 @@ export const PARAM_LOCATION_LABEL: Record<string, string> = {
   body: "Body",
 };
 
+function sourceFilled(src: Param["source"]): boolean {
+  if (!src) return false;
+  if (src.kind === "constant") return src.value.trim() !== "";
+  if (src.kind === "csv") return src.column.trim() !== "";
+  if (src.kind === "correlation") return src.variable.trim() !== "";
+  return true;
+}
+
+/**
+ * В этом же запросе уже есть значение для ${name}: константа, генератор или CSV.
+ * Корреляция не считается — она только читает переменную из другого места.
+ */
+export function valueInThisRequest(req: Pick<RequestModel, "params">, name: string): boolean {
+  const key = name.trim();
+  if (!key) return false;
+  return req.params.some((p) => {
+    if (p.name.trim() !== key) return false;
+    const src = p.source;
+    if (!src || src.kind === "correlation") return false;
+    if (src.kind === "constant") return src.value.trim() !== "";
+    if (src.kind === "csv") return src.column.trim() !== "";
+    return true;
+  });
+}
+
 /** Имена в фигурных скобках {name}. */
 export function bracesIn(text: string): string[] {
   const out: string[] = [];
@@ -134,12 +159,19 @@ export function consolidateRequestParams(req: RequestModel): RequestModel {
   }
 
   const deduped: Param[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   for (const p of params) {
     const k = `${p.location}:${p.name}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    deduped.push(p);
+    const at = seen.get(k);
+    if (at === undefined) {
+      seen.set(k, deduped.length);
+      deduped.push(p);
+      continue;
+    }
+    // Импорт кладёт один и тот же параметр дважды: пустой из {name} и заполненный из спеки.
+    if (sourceFilled(p.source) && !sourceFilled(deduped[at].source)) {
+      deduped[at] = p;
+    }
   }
 
   return { ...withPath, headers: [], params: deduped };
