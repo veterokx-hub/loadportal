@@ -142,7 +142,11 @@ export async function login(username: string, password: string): Promise<AuthSes
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
-  if (!res.ok) throw new Error(await errorText(res));
+  if (!res.ok) {
+    throw new Error(
+      await errorText(res, res.status === 401 ? "Неверный логин или пароль" : undefined)
+    );
+  }
   const data = await res.json();
   return {
     token: data.token,
@@ -348,6 +352,17 @@ export async function listBuilds(): Promise<BuildHistoryItem[]> {
   return res.json();
 }
 
+export interface BuildPolicy {
+  max_builds: number;
+  retention_days: number;
+}
+
+export async function getBuildPolicy(): Promise<BuildPolicy> {
+  const res = await fetch(`${BASE}/api/builds/policy`, { headers: { ...authHeaders() } });
+  await ensureOk(res);
+  return res.json();
+}
+
 export async function loadBuildScenario(id: string): Promise<Scenario> {
   const res = await fetch(`${BASE}/api/builds/${id}/scenario`, {
     headers: { ...authHeaders() },
@@ -467,22 +482,76 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-async function errorText(res: Response): Promise<string> {
+async function errorText(res: Response, fallback?: string): Promise<string> {
+  const generic = fallback ?? statusMessage(res.status);
   try {
     const data = await res.json();
     const raw =
       (typeof data.error === "string" && data.error) ||
       (typeof data.detail === "string" && data.detail) ||
       (typeof data.title === "string" && data.title) ||
-      (Array.isArray(data.detail)
-        ? data.detail.map((d: { msg?: string }) => d.msg).filter(Boolean).join("; ")
-        : "") ||
+      (Array.isArray(data.detail) ? validationText(data.detail) : "") ||
       "";
-    if (raw && !looksGarbled(raw)) return raw;
-    return statusMessage(res.status);
+    if (!raw || looksGarbled(raw) || REASON_PHRASES.has(raw.trim().toLowerCase())) return generic;
+    return raw;
   } catch {
-    return statusMessage(res.status);
+    return generic;
   }
+}
+
+/** Стандартные reason phrase HTTP: вместо них показываем русский текст по коду. */
+const REASON_PHRASES = new Set(
+  [
+    "bad request",
+    "unauthorized",
+    "forbidden",
+    "not found",
+    "method not allowed",
+    "conflict",
+    "payload too large",
+    "content too large",
+    "unsupported media type",
+    "unprocessable entity",
+    "unprocessable content",
+    "too many requests",
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+  ]
+);
+
+const VALIDATION_MESSAGES: Record<string, string> = {
+  missing: "обязательное поле",
+  string_type: "ожидается строка",
+  int_type: "ожидается целое число",
+  int_parsing: "ожидается целое число",
+  float_type: "ожидается число",
+  float_parsing: "ожидается число",
+  bool_type: "ожидается да/нет",
+  bool_parsing: "ожидается да/нет",
+  greater_than: "слишком маленькое значение",
+  greater_than_equal: "слишком маленькое значение",
+  less_than: "слишком большое значение",
+  less_than_equal: "слишком большое значение",
+  string_too_short: "слишком короткое значение",
+  string_too_long: "слишком длинное значение",
+  enum: "недопустимое значение",
+  literal_error: "недопустимое значение",
+  json_invalid: "некорректный JSON",
+};
+
+/** Ошибки валидации FastAPI/pydantic: [{type, loc, msg}] → «поле: что не так». */
+function validationText(items: { type?: string; loc?: unknown[]; msg?: string }[]): string {
+  return items
+    .map((d) => {
+      const field = (d.loc ?? []).filter((x) => x !== "body" && x !== "query").join(".");
+      const what = (d.type && VALIDATION_MESSAGES[d.type]) || d.msg || "";
+      if (!what) return "";
+      return field ? `${field}: ${what}` : what;
+    })
+    .filter(Boolean)
+    .join("; ");
 }
 
 /** Ответы без UTF-8 иногда приходят как «???????». */
@@ -493,17 +562,27 @@ function looksGarbled(text: string): boolean {
 
 function statusMessage(status: number): string {
   switch (status) {
+    case 400:
+    case 422:
+      return "Некорректные данные запроса";
     case 401:
-      return "Неверный логин или пароль / сессия истекла";
+      return "Сессия истекла — войдите снова";
     case 403:
       return "Недостаточно прав для этого действия";
     case 404:
-      return "Ресурс не найден";
+      return "Не найдено — возможно, объект уже удалён";
+    case 409:
+      return "Конфликт: объект уже существует или изменён";
+    case 413:
+      return "Слишком большой файл или запрос";
+    case 500:
+      return "Внутренняя ошибка сервера";
     case 502:
     case 503:
-      return "Сервис ещё не готов — подождите несколько секунд и обновите страницу";
+    case 504:
+      return "Сервис пока недоступен — подождите несколько секунд и обновите страницу";
     default:
-      return `Ошибка сервера (HTTP ${status})`;
+      return `Запрос не выполнен (HTTP ${status})`;
   }
 }
 

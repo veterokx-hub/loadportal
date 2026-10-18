@@ -10,7 +10,9 @@ spring:
   application:
     name: orchestrator
   config:
-    import: optional:file:${LOADTEST_CONSUL_VAULT_CONFIG:/config/consul-vault-config.yaml}
+    import: "optional:file:${LOADTEST_CONSUL_VAULT_CONFIG:/config/consul-vault-config.yaml},optional:file:${LOADTEST_PLATFORM_CONFIG:/config/application.properties}"
+  # Последний запасной вариант, если нет Consul, env и ConfigMap.
+  # Рабочий порядок задаёт PortalDataSourceConfig.
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/loadtest}
     username: ${SPRING_DATASOURCE_USERNAME:loadtest}

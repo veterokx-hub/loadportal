@@ -160,12 +160,70 @@ run_jmeter() {
   if [ -f "$OUT/taurus/kpi.jtl" ]; then mv "$OUT/taurus/kpi.jtl" "$OUT/kpi.jtl"; fi
 }
 
+# influx /write?db= портала → /api/v1/write. db= отбрасывается, остальные query-параметры остаются.
+# Готовый remote-write URL не трогаем.
+influx_to_rw_url() {
+  local u="$1" base query rest part
+  case "$u" in
+    */api/v1/write | */api/v1/write\?*) printf '%s' "$u" ;;
+    *)
+      base="${u%%\?*}"
+      query=""
+      case "$u" in
+        *\?*) query="${u#*\?}" ;;
+      esac
+      case "$base" in
+        */write)
+          base="${base%/write}/api/v1/write"
+          rest=""
+          if [ -n "$query" ]; then
+            local IFS='&'
+            # shellcheck disable=SC2086
+            set -- $query
+            IFS=' '
+            for part in "$@"; do
+              case "$part" in
+                db | db=*) ;;
+                *) rest="${rest:+$rest&}$part" ;;
+              esac
+            done
+          fi
+          if [ -n "$rest" ]; then
+            printf '%s?%s' "$base" "$rest"
+          else
+            printf '%s' "$base"
+          fi
+          ;;
+        *) printf '%s' "$u" ;;
+      esac
+      ;;
+  esac
+}
+
 run_k6() {
   local script
   script="$(script_file js)"
   GOMAXPROCS="$(awk -v c="$LT_CPU" 'BEGIN { if (c ~ /m$/) { sub(/m$/, "", c); c = c / 1000 } n = int(c); if (n < c) n++; if (n < 1) n = 1; print n }')"
   export GOMAXPROCS
 
+  # vm.json кладёт генератор: адрес, токен и перцентили с портала.
+  # Явный K6_PROMETHEUS_RW_SERVER_URL и LT_INFLUX_URL перекрывают адрес, как -Jinfluxdb_url у JMeter.
+  # Токен в лог и в аргументы k6 не попадает: k6 читает K6_PROMETHEUS_RW_BEARER_TOKEN из окружения.
+  local vm vm_url="" vm_token="" vm_stats=""
+  vm="$(dirname "$script")/vm.json"
+  if [ -f "$vm" ]; then
+    vm_url="$(jq -r '.server_url // empty' "$vm")"
+    vm_token="$(jq -r '.bearer_token // empty' "$vm")"
+    vm_stats="$(jq -r '.trend_stats // empty' "$vm")"
+  fi
+  if [ -n "${LT_INFLUX_URL:-}" ]; then
+    vm_url="$(influx_to_rw_url "$LT_INFLUX_URL")"
+  fi
+  if [ -n "${K6_PROMETHEUS_RW_SERVER_URL:-}" ]; then
+    vm_url="$K6_PROMETHEUS_RW_SERVER_URL"
+  fi
+
+  local run_id="${LT_PORTAL_RUN_ID:-$LT_RUN_LABEL}"
   local args=(run --no-usage-report --quiet
     --summary-export "$OUT/summary.json"
     --summary-trend-stats "avg,min,med,max,p(90),p(95),p(99)"
@@ -173,16 +231,23 @@ run_k6() {
     # Скрипт сам выбирает набор scenarios по LT_MODE: CLI-флаги --vus/--iterations
     # заменили бы все сценарии дефолтным и потеряли exec-функции.
     -e "LT_MODE=$MODE" -e "LT_SHARD=$SHARD" -e "LT_SHARDS=$SHARDS"
-    -e "LT_SMOKE_DURATION_SEC=$LT_SMOKE_DURATION_SEC")
+    -e "LT_SMOKE_DURATION_SEC=$LT_SMOKE_DURATION_SEC" -e "LT_RUN_ID=$run_id")
   if [ -n "$LT_BASE_URL" ]; then args+=(-e "BASE_URL=$LT_BASE_URL"); fi
   if [ "$SHARDS" -gt 1 ]; then
     local sequence="0" i
     for ((i = 1; i <= SHARDS; i++)); do sequence+=",$i/$SHARDS"; done
     args+=(--execution-segment "$((SHARD - 1))/$SHARDS:$SHARD/$SHARDS" --execution-segment-sequence "$sequence")
   fi
-  if [ -n "${K6_PROMETHEUS_RW_SERVER_URL:-}" ]; then
-    export K6_PROMETHEUS_RW_TREND_STATS="${K6_PROMETHEUS_RW_TREND_STATS:-p(95),p(99)}"
+  if [ -n "$vm_url" ]; then
+    export K6_PROMETHEUS_RW_SERVER_URL="$vm_url"
+    if [ -z "${K6_PROMETHEUS_RW_TREND_STATS:-}" ]; then
+      export K6_PROMETHEUS_RW_TREND_STATS="${vm_stats:-p(95),p(99)}"
+    fi
+    if [ -z "${K6_PROMETHEUS_RW_BEARER_TOKEN:-}" ] && [ -n "$vm_token" ]; then
+      export K6_PROMETHEUS_RW_BEARER_TOKEN="$vm_token"
+    fi
     args+=(-o experimental-prometheus-rw)
+    log "метрики k6 → VictoriaMetrics (prometheus remote write)"
   fi
 
   run_tool k6 "${args[@]}" "$script"

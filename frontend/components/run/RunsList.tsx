@@ -86,7 +86,7 @@ export function RunsList({
 
       {error && <div className="error">{error}</div>}
       {filtered.length === 0 && !loading && (
-        <div className="hint">Прогонов ещё нет — создайте запуск на вкладке «Новый запуск».</div>
+        <div className="hint">Прогонов нет — запустите тест на вкладке «Новый запуск» или сбросьте фильтры.</div>
       )}
 
       {filtered.length > 0 && (

@@ -4,6 +4,7 @@ import com.loadtest.constructor.config.AuthInterceptor;
 import com.loadtest.constructor.model.Scenario;
 import com.loadtest.constructor.security.AuthContext;
 import com.loadtest.constructor.service.BuildHistoryService;
+import com.loadtest.constructor.web.dto.BuildPolicy;
 import com.loadtest.constructor.web.dto.BuildRecordSummary;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
@@ -26,6 +27,12 @@ public class BuildHistoryController {
     public List<BuildRecordSummary> list(HttpServletRequest request) {
         String username = AuthInterceptor.requireAuth(request).username();
         return buildHistoryService.listForUser(username);
+    }
+
+    @GetMapping("/policy")
+    public BuildPolicy policy(HttpServletRequest request) {
+        AuthInterceptor.requireAuth(request);
+        return new BuildPolicy(BuildHistoryService.MAX_BUILDS_PER_USER, buildHistoryService.retentionDays());
     }
 
     @GetMapping("/{id}/scenario")

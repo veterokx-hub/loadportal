@@ -27,6 +27,8 @@ export interface EngineMeta {
   modeHint: (maxSearch: boolean) => string;
   /** Подсказка к полю процента выполнений. */
   throughputTitle: string;
+  /** Подсказка к полю числа повторов за итерацию. */
+  repeatTitle: string;
   /** Что окажется в артефакте. */
   buildHint: string;
 }
@@ -48,6 +50,8 @@ export const ENGINE_META: Record<Engine, EngineMeta> = {
         : "Разгон от min(1, RPS) до цели, затем удержание.",
     throughputTitle:
       "Процент итераций потока, в которых запрос выполняется (Throughput Controller). 100 — каждый проход",
+    repeatTitle:
+      "Сколько раз запрос выполняется за одну итерацию потока (Loop Controller). Доля RPS пропорциональна числу повторов",
     buildHint:
       "Группа → Concurrency Thread Group + Throughput Shaping Timer. Нужны плагины jpgc-casutg и jpgc-tst.",
   },
@@ -67,6 +71,8 @@ export const ENGINE_META: Record<Engine, EngineMeta> = {
         : "Разгон от min(1, RPS) до цели, затем удержание. Пул VU = RPS × латентность × 1,5.",
     throughputTitle:
       "Процент итераций, в которых запрос выполняется. 100 — каждый проход; arrival считается по сумме процентов",
+    repeatTitle:
+      "Сколько раз запрос выполняется за итерацию. arrival считается по сумме повторов",
     buildHint:
       "Группа → k6 scenario (ramping-arrival-rate). Корреляция, CSV через SharedArray, checks и portal_errors.",
   },
@@ -87,6 +93,8 @@ export const ENGINE_META: Record<Engine, EngineMeta> = {
         : "rampUsersPerSec, затем constantUsersPerSec со случайными интервалами стартов. Пул пользователей не задаётся.",
     throughputTitle:
       "Процент итераций пользователя, в которых запрос выполняется. 100 — каждый проход; usersPerSec считается по сумме процентов",
+    repeatTitle:
+      "Сколько раз запрос выполняется за итерацию пользователя. usersPerSec считается по сумме повторов",
     buildHint:
       "Группа → Gatling scenario в общем setUp. Артефакт — Maven-проект: mvn gatling:test, JDK 17+.",
   },

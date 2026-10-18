@@ -40,11 +40,14 @@ function blankScenario(name: string): Scenario {
 export function Step1Source({
   onAnalyzed,
   onRestore,
+  onNewScenario,
   currentScenario,
 }: {
   onAnalyzed: (s: Scenario) => void;
   /** Подтянуть сохранённую сборку (полная замена текущего сценария). */
   onRestore?: (s: Scenario) => void;
+  /** Очистить текущий сценарий. Если сборка уже начата, родитель спрашивает про сохранение. */
+  onNewScenario?: () => void;
   currentScenario?: Scenario | null;
 }) {
   const [sourceType, setSourceType] = useState<SourceType | "blank">("openapi");
@@ -99,33 +102,46 @@ export function Step1Source({
 
   return (
     <div className="panel">
-      <h2>1. Источник спецификации</h2>
+      <div className="source-head">
+        <h2>1. Источник</h2>
+        {onNewScenario && (
+          <button type="button" className="ghost small" onClick={onNewScenario}>
+            + Новый сценарий
+          </button>
+        )}
+      </div>
 
       <div className="field">
         <label>Тип источника</label>
         <div className="inline">
-          <div
+          <button
+            type="button"
+            aria-pressed={sourceType === "openapi"}
             className={`pill-source ${sourceType === "openapi" ? "active" : ""}`}
             onClick={() => setSourceType("openapi")}
           >
             Swagger / OpenAPI
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
+            aria-pressed={sourceType === "postman"}
             className={`pill-source ${sourceType === "postman" ? "active" : ""}`}
             onClick={() => setSourceType("postman")}
           >
-            Postman Collection
-          </div>
-          <div
+            Postman-коллекция
+          </button>
+          <button
+            type="button"
+            aria-pressed={isBlank}
             className={`pill-source ${isBlank ? "active" : ""}`}
             onClick={() => setSourceType("blank")}
           >
             С чистого листа
-          </div>
+          </button>
         </div>
         {isBlank && (
           <div className="hint">
-            Сценарий создаётся без спецификации — запросы добавите вручную на шаге «Запросы».
+            Пустой сценарий: запросы добавите вручную на шаге «Запросы».
           </div>
         )}
       </div>
@@ -134,18 +150,22 @@ export function Step1Source({
         <div className="field">
           <label>Способ ввода</label>
           <div className="inline">
-            <div
+            <button
+              type="button"
+              aria-pressed={mode === "url"}
               className={`pill-source ${mode === "url" ? "active" : ""}`}
               onClick={() => setMode("url")}
             >
               По URL
-            </div>
-            <div
+            </button>
+            <button
+              type="button"
+              aria-pressed={mode === "content"}
               className={`pill-source ${mode === "content" ? "active" : ""}`}
               onClick={() => setMode("content")}
             >
-              Вставить содержимое
-            </div>
+              Файл или текст
+            </button>
           </div>
         </div>
       )}
@@ -154,21 +174,21 @@ export function Step1Source({
         <div className="field">
           <label>URL Swagger/OpenAPI</label>
           <input
-            placeholder="https://example.com/v3/api-docs или .../swagger.json"
+            placeholder="https://example.com/v3/api-docs или …/swagger.json"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
           />
           <div className="hint">
-            JSON/YAML спека (<code>swagger.json</code>, <code>v3/api-docs</code>) или страница
-            Swagger UI — портал найдёт спецификацию сам.
+            Ссылка на JSON/YAML (<code>swagger.json</code>, <code>v3/api-docs</code>) или на страницу
+            Swagger UI — спецификацию портал найдёт сам.
           </div>
         </div>
       ) : (
         <div className="field">
           <label>
             {sourceType === "postman"
-              ? "JSON Postman-коллекции"
-              : "Содержимое спецификации (JSON/YAML)"}
+              ? "Postman-коллекция (JSON)"
+              : "Спецификация (JSON/YAML)"}
           </label>
           <div className="inline" style={{ marginBottom: 10, gap: 10, alignItems: "center" }}>
             <FileUploadButton
@@ -184,8 +204,8 @@ export function Step1Source({
           <textarea
             placeholder={
               sourceType === "postman"
-                ? "Вставьте JSON экспортированной Postman-коллекции или загрузите файл…"
-                : "Вставьте JSON/YAML спецификации..."
+                ? "Вставьте JSON Postman-коллекции…"
+                : "Вставьте JSON/YAML спецификации…"
             }
             value={content}
             onChange={(e) => {
@@ -200,7 +220,7 @@ export function Step1Source({
         <label>Название сценария (необязательно)</label>
         <input
           placeholder={
-            isBlank ? "Новый сценарий" : "Возьмётся из спецификации, если не указано"
+            isBlank ? "Новый сценарий" : "По умолчанию — из спецификации или коллекции"
           }
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -215,7 +235,7 @@ export function Step1Source({
           {isBlank
             ? "Создать пустой сценарий →"
             : loading
-              ? "Анализируем..."
+              ? "Анализируем…"
               : "Анализировать →"}
         </button>
       </div>

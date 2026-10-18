@@ -18,6 +18,7 @@ public class EnvSecretResolver implements SecretResolver {
             return Optional.of(direct.trim());
         }
         String envName = switch (vaultPath) {
+            case "loadtest/postgres/password" -> "SPRING_DATASOURCE_PASSWORD";
             case "loadtest/ad/bind-password" -> "LDAP_BIND_PASSWORD";
             case "loadtest/gitlab/trigger-token" -> "GITLAB_TRIGGER_TOKEN";
             case "loadtest/gitlab/webhook-secret" -> "GITLAB_WEBHOOK_SECRET";

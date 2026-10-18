@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type CSSProperties } from "react";
 import type { Scenario } from "@/lib/types";
+import { setHealthFocus } from "@/lib/health-focus";
 import { analyzeScenario, type ReadinessCheck } from "@/lib/readiness";
 import { formatRps } from "@/lib/profile";
 
@@ -25,7 +26,6 @@ export function ScenarioPulse({
 }) {
   const report = useMemo(() => analyzeScenario(scenario), [scenario]);
   const [expanded, setExpanded] = useState(expandedProp ?? false);
-  const [copied, setCopied] = useState(false);
 
   const ringColor =
     report.score >= 90
@@ -39,15 +39,10 @@ export function ScenarioPulse({
   const circumference = 2 * Math.PI * 36;
   const dash = (report.score / 100) * circumference;
 
-  function copyPitch() {
-    navigator.clipboard.writeText(report.pitch).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }
-
   function onCheckClick(c: ReadinessCheck) {
-    if (c.step !== undefined && onGoToStep) onGoToStep(c.step);
+    if (c.step === undefined || !onGoToStep) return;
+    if (c.focus) setHealthFocus(c.focus);
+    onGoToStep(c.step);
   }
 
   return (
@@ -77,8 +72,8 @@ export function ScenarioPulse({
             <span className="muted">
               {report.requestCount} запр. · {formatRps(report.peakRps)} RPS · ~
               {report.durationSec < 60
-                ? `${report.durationSec}с`
-                : `${Math.round(report.durationSec / 60)}мин`}
+                ? `${report.durationSec} с`
+                : `${Math.round(report.durationSec / 60)} мин`}
             </span>
           </div>
         </div>
@@ -87,13 +82,13 @@ export function ScenarioPulse({
 
         <div className="pulse-badges">
           {report.blockers > 0 && (
-            <span className="pulse-badge err">{report.blockers} блокер</span>
+            <span className="pulse-badge err">Блокеры: {report.blockers}</span>
           )}
           {report.warnings > 0 && (
-            <span className="pulse-badge warn">{report.warnings} предупр.</span>
+            <span className="pulse-badge warn">Предупр.: {report.warnings}</span>
           )}
           {report.chainCount > 0 && (
-            <span className="pulse-badge chain">{report.chainCount} цепочка</span>
+            <span className="pulse-badge chain">Цепочки: {report.chainCount}</span>
           )}
           <span className="muted pulse-chevron">{expanded ? "▲" : "▼"}</span>
         </div>
@@ -146,18 +141,16 @@ export function ScenarioPulse({
           )}
 
           <section className="pulse-section">
-            <div className="pulse-section-head">
-              <h3>Чеклист готовности</h3>
-              <button className="ghost small" onClick={copyPitch} type="button">
-                {copied ? "Скопировано ✓" : "Копировать описание"}
-              </button>
-            </div>
+            <h3>Чек-лист готовности</h3>
             <ul className="pulse-checks">
               {report.checks.map((c) => (
                 <li
                   key={c.id}
                   className={`pulse-check ${c.severity} ${c.step !== undefined ? "clickable" : ""}`}
-                  onClick={() => onCheckClick(c)}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    onCheckClick(c);
+                  }}
                   title={c.hint}
                 >
                   <span className="pulse-check-icon">{SEV_ICON[c.severity]}</span>

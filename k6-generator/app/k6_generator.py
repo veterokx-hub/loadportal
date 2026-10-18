@@ -4,10 +4,11 @@
  - каждая ГРУППА (union-find по корреляции ${var} и общему dataset_id) = отдельный
    k6-scenario с исполнителем ramping-arrival-rate;
  - target_rps группы — HTTP-сэмплы/с, как Throughput Shaping Timer. arrival-rate
-   = target_rps / сумма(throughput/100): итерация выполняет запрос в заданной доле проходов;
+   = target_rps / HTTP за итерацию: сумма(throughput/100) либо сумма repeat;
  - ramp стартует с min(1, target_rps) HTTP/с (как TST), не с нуля;
  - throughput — процент итераций (Throughput Controller, per thread). 100 — каждый проход.
-   В smoke запрос выполняется всегда, иначе threshold count>0 не увидит сэмпл;
+   balance=repeat — цикл repeat раз за итерацию. В smoke процент не режет запрос,
+   повторы применяются;
  - корреляция (json/regex/boundary) кладётся в объект vars и подставляется дальше;
  - валидация (код ответа, contains) = check(); провал валидации или status=0
    идёт в portal_errors (как assertion JMeter), не в сырой http_req_failed;
@@ -282,6 +283,22 @@ def _clamp_pct(value: int) -> int:
     return max(1, min(100, int(value)))
 
 
+def _repeat_mode(members: list[Request]) -> bool:
+    """Цикл, если в группе от двух запросов и выбран balance=repeat, без явного percent."""
+    if len(members) < 2:
+        return False
+    marked = [r.balance for r in members if r.balance in ("percent", "repeat")]
+    return "repeat" in marked and "percent" not in marked
+
+
+def _repeat_times(req: Request) -> int:
+    try:
+        n = int(req.repeat)
+    except (TypeError, ValueError):
+        return 1
+    return n if n > 0 else 1
+
+
 def _throughput_pct(req: Request, members: list[Request]) -> int:
     """Процент проходов. Группа из одного запроса — всегда 100."""
     if len(members) < 2:
@@ -295,7 +312,10 @@ def _throughput_pct(req: Request, members: list[Request]) -> int:
 
 
 def _samples_per_iteration(members: list[Request]) -> float:
-    """Ожидаемое число HTTP-сэмплов за итерацию (сумма долей)."""
+    """Ожидаемое число HTTP-сэмплов за итерацию: сумма повторов или сумма долей."""
+    if _repeat_mode(members):
+        total = sum(_repeat_times(r) for r in members)
+        return float(total) if total > 0 else 1.0
     total = sum(_throughput_pct(r, members) / 100 for r in members)
     return total if total > 0 else 1.0
 
@@ -436,10 +456,16 @@ def _emit_request(req: Request, request_name: str, members: list[Request]) -> li
     )
 
     pct = _throughput_pct(req, members)
-    gated = pct < 100
+    repeat_mode = _repeat_mode(members)
+    loops = _repeat_times(req) if repeat_mode else 1
+    gated = not repeat_mode and pct < 100
+    looped = loops > 1
     base_ind = ind
     if gated:
         L.append(f"{ind}if (allowThroughput({json.dumps(req.id)}, {pct})) {{")
+        base_ind = ind + "  "
+    elif looped:
+        L.append(f"{ind}for (let _rep = 0; _rep < {loops}; _rep++) {{")
         base_ind = ind + "  "
 
     L.append(f"{base_ind}{{")
@@ -525,7 +551,7 @@ def _emit_request(req: Request, request_name: str, members: list[Request]) -> li
             L.append(f"{b}vars[{var}] = extractBoundary(res.body, {left}, {right}, {ex.match_no}, {dv});")
 
     L.append(f"{base_ind}}}")
-    if gated:
+    if gated or looped:
         L.append(f"{ind}}}")
     return L
 

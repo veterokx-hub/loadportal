@@ -73,8 +73,8 @@ export function ChangePasswordScreen({
         </div>
 
         <p className="login-lead">
-          Пользователь <code>{username}</code> — задайте новый пароль. После сохранения
-          все сессии будут сброшены, войдите снова.
+          Задайте новый пароль для <code>{username}</code>. После сохранения все сессии
+          завершатся — войдите снова.
         </p>
 
         <div className="field">
@@ -130,7 +130,7 @@ export function ChangePasswordScreen({
           disabled={busy}
         >
           {busy && <span className="btn-spinner" aria-hidden />}
-          <span className="btn-label">{busy ? "Сохранение…" : "Сохранить и войти снова"}</span>
+          <span className="btn-label">{busy ? "Сохраняем…" : "Сменить пароль"}</span>
         </button>
         <button
           type="button"

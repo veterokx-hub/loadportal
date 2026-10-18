@@ -35,22 +35,31 @@ public class LdapAuthService {
             log.warn("LDAP skipped: empty URL");
             return false;
         }
-        try {
-            String userDn = resolveUserDn(username.trim(), settings);
-            if (userDn == null || userDn.isBlank()) {
-                log.warn("LDAP: пользователь '{}' не найден (проверьте search base/filter и bind)", username);
-                return false;
+        Exception last = null;
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                String userDn = resolveUserDn(username.trim(), settings);
+                if (userDn == null || userDn.isBlank()) {
+                    log.warn("LDAP: пользователь '{}' не найден (проверьте search base/filter и bind)", username);
+                    return false;
+                }
+                Hashtable<String, String> env = baseEnv(url);
+                env.put(Context.SECURITY_PRINCIPAL, userDn);
+                env.put(Context.SECURITY_CREDENTIALS, password);
+                DirContext ctx = new InitialDirContext(env);
+                ctx.close();
+                return true;
+            } catch (Exception e) {
+                last = e;
+                if (attempt == 1 && staleBind(e)) {
+                    log.warn("LDAP: соединение без bind, повтор для {}", username);
+                    continue;
+                }
+                break;
             }
-            Hashtable<String, String> env = baseEnv(url);
-            env.put(Context.SECURITY_PRINCIPAL, userDn);
-            env.put(Context.SECURITY_CREDENTIALS, password);
-            DirContext ctx = new InitialDirContext(env);
-            ctx.close();
-            return true;
-        } catch (Exception e) {
-            log.warn("LDAP auth failed for {}: {}", username, e.toString());
-            return false;
         }
+        log.warn("LDAP auth failed for {}: {}", username, last);
+        return false;
     }
 
     private String resolveUserDn(String username, PortalSettingsEntity s) throws Exception {
@@ -100,7 +109,15 @@ public class LdapAuthService {
         env.put(Context.REFERRAL, "ignore");
         env.put("com.sun.jndi.ldap.connect.timeout", "5000");
         env.put("com.sun.jndi.ldap.read.timeout", "10000");
+        // Пул JNDI отдаёт соединение после idle-timeout AD уже без bind.
+        // Следующий search падает с DSID-0C090D5A, хотя первый вход прошёл.
+        env.put("com.sun.jndi.ldap.connect.pool", "false");
         return env;
+    }
+
+    private static boolean staleBind(Exception e) {
+        String text = e.toString();
+        return text.contains("successful bind") || text.contains("DSID-0C090D5A");
     }
 
     private static boolean hasText(String v) {

@@ -31,7 +31,7 @@ export function AnalysisModule({
 
   const progress = view === "new" ? 0 : view === "list" ? 0.5 : 1;
   const title =
-    view === "new" ? "1. Что анализируем" : view === "list" ? "2. Отчёты" : "3. Отчёт";
+    view === "new" ? "1. Новый анализ" : view === "list" ? "2. Отчёты" : "3. Отчёт";
 
   return (
     <>

@@ -64,11 +64,18 @@ export function NumberField({
         aria-invalid={touched && !ok}
         placeholder={placeholder}
         value={raw}
-        onFocus={() => {
+        onFocus={(e) => {
           focused.current = true;
+          const el = e.currentTarget;
+          // mouseup после клика снимает выделение, поэтому выделяем на следующем кадре.
+          // Иначе «0» остаётся, и цифра дописывается справа: 05.
+          requestAnimationFrame(() => el.select());
         }}
         onChange={(e) => {
-          const v = e.target.value.replace(",", ".");
+          let v = e.target.value.replace(",", ".");
+          if ((raw === "0" || raw === "-0") && /^-?0\d/.test(v)) {
+            v = v.replace(/^(-?)0+/, "$1");
+          }
           if (v !== "" && !/^-?\d*\.?\d*$/.test(v)) return;
           setTouched(true);
           setRaw(v);

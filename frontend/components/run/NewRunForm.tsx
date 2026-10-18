@@ -216,24 +216,28 @@ export function NewRunForm({
           required
           autoComplete="off"
         />
-        <div className="hint">Ключ задачи → переменная RUN_ID.</div>
+        <div className="hint">Передаётся в пайплайн как RUN_ID.</div>
       </div>
 
       <div className="field">
         <label>Источник скрипта</label>
         <div className="inline">
-          <div
+          <button
+            type="button"
+            aria-pressed={sourceMode === "build"}
             className={`pill-source ${sourceMode === "build" ? "active" : ""}`}
             onClick={() => setSourceMode("build")}
           >
             Из сборки
-          </div>
-          <div
+          </button>
+          <button
+            type="button"
+            aria-pressed={sourceMode === "upload"}
             className={`pill-source ${sourceMode === "upload" ? "active" : ""}`}
             onClick={() => setSourceMode("upload")}
           >
             Загрузить файл
-          </div>
+          </button>
         </div>
       </div>
 
@@ -241,7 +245,7 @@ export function NewRunForm({
         <div className="field">
           {builds.length === 0 ? (
             <div className="hint">
-              Сборок пока нет — сохраните сценарий в разделе «Сценарий» или загрузите файл.
+              Сборок пока нет — сохраните сборку в разделе «Сценарий» или загрузите файл.
             </div>
           ) : (
             <>
@@ -262,7 +266,7 @@ export function NewRunForm({
       {sourceMode === "upload" && (
         <>
           <div className="field">
-            <label>Файл (.jmx, .js или .zip)</label>
+            <label>Файл (.jmx, .js, .ts или .zip)</label>
             <div className="inline" style={{ gap: 10, alignItems: "center" }}>
               <select
                 value={uploadEngine}
@@ -283,9 +287,8 @@ export function NewRunForm({
               {selectedScript && <span className="hint">{selectedScript.filename}</span>}
             </div>
             <div className="hint">
-              Движок уходит в <code>TOOL</code> пайплайна: по расширению .zip его не угадать
-              (JMeter+CSV, k6+CSV, Maven-проект Gatling). ZIP кладётся в S3
-              распакованным, в ту же папку ключа.
+              По архиву .zip движок не определить (JMeter + CSV, k6 + CSV, Maven-проект
+              Gatling) — выберите его вручную. Архив распаковывается в S3.
             </div>
             {uploading && <div className="hint">Загрузка…</div>}
           </div>
@@ -307,7 +310,7 @@ export function NewRunForm({
 
       <div className="row">
         <div className="field">
-          <label>Старт</label>
+          <label>Начало</label>
           <input
             type="datetime-local"
             value={startLocal}
@@ -316,7 +319,7 @@ export function NewRunForm({
           />
         </div>
         <div className="field">
-          <label>Окончание</label>
+          <label>Конец</label>
           <input
             type="datetime-local"
             value={endLocal}
@@ -327,7 +330,7 @@ export function NewRunForm({
             required
           />
           <div className="hint">
-            По умолчанию из длительности сценария (~{durationSec} с), можно изменить.
+            По умолчанию — начало плюс длительность сценария (~{durationSec} с).
           </div>
         </div>
       </div>
@@ -373,9 +376,8 @@ export function NewRunForm({
           </div>
         </div>
         <div className="hint">
-          Не обязательно для запуска, но без этих полей модуль «Анализ» не найдёт метрики:
-          из URL стенда не видно, какие поды за ним стоят. Заполнено — отчёт соберётся
-          автоматически, как только тест закончится.
+          Необязательно, но без этих полей анализ не найдёт метрики сервиса. Если сервис указан,
+          отчёт соберётся автоматически после окончания теста.
         </div>
       </div>
 
@@ -385,7 +387,7 @@ export function NewRunForm({
         style={{ margin: "8px 0 16px" }}
       >
         <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-          Дополнительно (CPU / Memory)
+          Ресурсы генератора (CPU / Memory)
         </summary>
         <div className="row" style={{ marginTop: 12 }}>
           <div className="field">
@@ -397,7 +399,7 @@ export function NewRunForm({
             <input value={memory} onChange={(e) => setMemory(e.target.value)} placeholder="4Gi" />
           </div>
         </div>
-        <div className="hint">REPLICAS всегда 1. Память JVM задаётся в образе пайплайна.</div>
+        <div className="hint">Генератор всегда в одной реплике. Хип JVM — доля от Memory.</div>
       </details>
 
       <div className="field">

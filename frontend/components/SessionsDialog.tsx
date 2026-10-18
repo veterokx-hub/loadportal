@@ -90,10 +90,10 @@ export function SessionsDialog({
           <div>
             <h2>Сессии</h2>
             <p className="muted" style={{ margin: "4px 0 0", fontSize: 12 }}>
-              Живые входы, до 3 часов каждый
+              Активные входы, каждый — до 3 ч
             </p>
           </div>
-          <button type="button" className="ghost small" onClick={onClose}>
+          <button type="button" className="ghost small" onClick={onClose} aria-label="Закрыть">
             ✕
           </button>
         </div>
@@ -119,7 +119,7 @@ export function SessionsDialog({
                 <tr key={row.id}>
                   <td>{sessionTime(row.created_at)}</td>
                   <td>{sessionTime(row.expires_at)}</td>
-                  <td>{row.current ? <span className="session-current">эта</span> : null}</td>
+                  <td>{row.current ? <span className="session-current">текущая</span> : null}</td>
                   <td>
                     <button
                       type="button"
@@ -127,7 +127,7 @@ export function SessionsDialog({
                       disabled={busy}
                       onClick={() => void killOne(row)}
                     >
-                      Отозвать
+                      Завершить
                     </button>
                   </td>
                 </tr>
@@ -135,7 +135,7 @@ export function SessionsDialog({
               {rows.length === 0 && !error && (
                 <tr>
                   <td colSpan={4} className="muted">
-                    Нет живых сессий
+                    Нет активных сессий
                   </td>
                 </tr>
               )}
@@ -148,7 +148,7 @@ export function SessionsDialog({
             Закрыть
           </button>
           <button type="button" onClick={() => void killAll()} disabled={busy || rows.length === 0}>
-            Выйти везде
+            Выйти на всех устройствах
           </button>
         </div>
       </div>

@@ -170,6 +170,41 @@ def test_remote_write_url_keeps_native_endpoint():
         remote_write_url("http://vm:8428/influx")
 
 
+def test_repeat_balance_loops_instead_of_percent():
+    scenario = ScenarioDraft(
+        name="loops",
+        source_type=SourceType.OPENAPI,
+        base_url="https://sut.example",
+        requests=[
+            Request(
+                id="a",
+                order=1,
+                name="login",
+                method="POST",
+                path="/login",
+                dataset_id="ds",
+                repeat=1,
+                throughput=20,
+                balance="repeat",
+            ),
+            Request(
+                id="b",
+                order=2,
+                name="order",
+                method="GET",
+                path="/order",
+                dataset_id="ds",
+                repeat=5,
+                balance="repeat",
+            ),
+        ],
+    )
+    script = generate_k6(scenario).script
+    assert "for (let _rep = 0; _rep < 5; _rep++)" in script
+    assert "for (let _rep = 0; _rep < 1;" not in script
+    assert "if (allowThroughput(" not in script
+
+
 @pytest.mark.skipif(shutil.which("k6") is None, reason="k6 не установлен")
 def test_k6_inspect_both_modes():
     result = generate_k6(_scenario())

@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { BuildHistoryItem } from "@/lib/api";
-import { deleteBuild, listBuilds, loadBuildScenario } from "@/lib/api";
+import type { BuildHistoryItem, BuildPolicy } from "@/lib/api";
+import { deleteBuild, getBuildPolicy, listBuilds, loadBuildScenario } from "@/lib/api";
 import type { Scenario } from "@/lib/types";
 import { getUsername } from "@/lib/auth";
 import { usePortal } from "@/context/PortalContext";
@@ -27,6 +27,7 @@ export function BuildHistory({
   const [restoring, setRestoring] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [pendingRestoreId, setPendingRestoreId] = useState<string | null>(null);
+  const [policy, setPolicy] = useState<BuildPolicy | null>(null);
   const { isDirty, markScenarioSaved } = usePortal();
 
   const load = useCallback(async () => {
@@ -44,6 +45,10 @@ export function BuildHistory({
   useEffect(() => {
     load();
   }, [load, refreshKey]);
+
+  useEffect(() => {
+    getBuildPolicy().then(setPolicy, () => setPolicy(null));
+  }, []);
 
   async function doRestore(id: string) {
     setRestoring(id);
@@ -68,7 +73,7 @@ export function BuildHistory({
   }
 
   async function remove(id: string) {
-    if (!window.confirm("Удалить эту сборку? Связанный скрипт portal_build тоже будет удалён.")) {
+    if (!window.confirm("Удалить сборку? Скрипт, созданный из неё, тоже удалится.")) {
       return;
     }
     setDeleting(id);
@@ -88,8 +93,8 @@ export function BuildHistory({
       {pendingRestoreId && currentScenario && (
         <SaveScenarioDialog
           scenario={currentScenario}
-          title="Подтянуть старую сборку"
-          message={`Текущий сценарий «${currentScenario.name}» будет заменён выбранной сборкой. Сохранить текущую сборку перед этим?`}
+          title="Открыть сборку"
+          message={`Сценарий «${currentScenario.name}» будет заменён выбранной сборкой. Сохранить текущую сборку?`}
           defaultEngine={defaultEngine}
           onCancel={() => setPendingRestoreId(null)}
           onDone={(saved) => {
@@ -106,7 +111,8 @@ export function BuildHistory({
       <div className="build-history-head">
         <h3>История сборок</h3>
         <span className="muted" style={{ fontSize: 12 }}>
-          пользователь: <code>{getUsername()}</code> · последние 30 · TTL 30 дн.
+          пользователь: <code>{getUsername()}</code>
+          {policy && ` · последние ${policy.max_builds} · хранятся ${policy.retention_days} дн.`}
         </span>
         <button className="ghost small" type="button" onClick={load} disabled={loading}>
           {loading ? "…" : "Обновить"}
@@ -149,7 +155,7 @@ export function BuildHistory({
                         disabled={restoring === it.id || deleting === it.id}
                         onClick={() => restore(it.id)}
                       >
-                        {restoring === it.id ? "…" : "Подтянуть"}
+                        {restoring === it.id ? "…" : "Открыть"}
                       </button>
                       <button
                         className="ghost small"

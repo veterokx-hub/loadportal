@@ -6,10 +6,12 @@ import { groupRequests, groupTitle } from "../lib/grouping.ts";
 import {
   arrivalRate,
   formatRps,
+  groupBalance,
   groupProfile,
   iterationWeights,
   samplesPerIteration,
   totalDuration,
+  withThroughput,
 } from "../lib/profile.ts";
 import { bracesIn, consolidateRequestParams, paramsFromTemplates } from "../lib/request-params.ts";
 import { clashMessage, scriptVarClashes, scriptWriters } from "../lib/script-vars.ts";
@@ -85,6 +87,37 @@ test("arrivalRate делит HTTP RPS на сумму долей итераци�
   assert.equal(arrivalRate(20, 1), 20);
   assert.deepEqual(iterationWeights([{ repeat: 1 }, { repeat: 3 }]), [0.33, 1]);
   assert.equal(samplesPerIteration([{ repeat: 5 }]), 1);
+  assert.equal(groupBalance([{ balance: "repeat" }, {}]), "repeat");
+  assert.equal(groupBalance([{ balance: "repeat" }, { balance: "percent" }]), "percent");
+  assert.equal(
+    samplesPerIteration([
+      { balance: "repeat", repeat: 1, throughput: 20 },
+      { balance: "repeat", repeat: 4, throughput: 100 },
+    ]),
+    5
+  );
+});
+
+test("режим повторов сохраняет число циклов и не переписывает процент", () => {
+  const out = withThroughput(
+    scenario([
+      request({ id: "a", order: 1, name: "A", dataset_id: "d", repeat: 1, balance: "repeat" }),
+      request({
+        id: "b",
+        order: 2,
+        name: "B",
+        dataset_id: "d",
+        repeat: 4,
+        throughput: 40,
+        balance: "repeat",
+      }),
+    ])
+  );
+  const byId = Object.fromEntries(out.map((r) => [r.id, r]));
+  assert.equal(byId.a.repeat, 1);
+  assert.equal(byId.a.balance, "repeat");
+  assert.equal(byId.b.repeat, 4);
+  assert.equal(byId.b.throughput, 40);
 });
 
 test("groupProfile и totalDuration для ramp-hold и поиска максимума", () => {

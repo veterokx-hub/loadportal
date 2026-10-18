@@ -28,7 +28,7 @@ export function LoginScreen({
     try {
       await onLogin(username.trim(), password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка входа");
+      setError(err instanceof Error ? err.message : "Не удалось войти");
     } finally {
       setBusy(false);
     }
@@ -60,7 +60,7 @@ export function LoginScreen({
         </div>
 
         <p className="login-lead">
-          Подготовка сценариев нагрузочного тестирования · JMeter · k6
+          Подготовка и запуск нагрузочных тестов · JMeter · k6 · Gatling
         </p>
 
         {notice && (

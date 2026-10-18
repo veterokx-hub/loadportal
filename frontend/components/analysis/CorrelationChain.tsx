@@ -27,8 +27,8 @@ export function CorrelationChain({
     <article className={`chain-card tone-${tone}`}>
       <header className="chain-head">
         <h4>{correlation.title}</h4>
-        <span className="tag" title="Насколько согласованы находки по времени и связям каталога">
-          связность {correlation.confidence}%
+        <span className="tag" title="Растёт с числом звеньев и связей между ними по каталогу">
+          уверенность {correlation.confidence}%
         </span>
       </header>
 

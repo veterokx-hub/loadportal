@@ -25,14 +25,14 @@ export function AppModulesNav({
               }`}
               aria-current={isActive ? "page" : undefined}
               aria-disabled={!m.available ? true : undefined}
-              title={m.available ? m.title : `${m.title} — скоро`}
+              title={m.available ? m.title : `${m.title} — в разработке`}
             >
               <span className="module-tab-num" aria-hidden>
                 {i + 1}
               </span>
               <span className="module-tab-label">{m.nav}</span>
               {!m.available && (
-                <span className="module-tab-soon" aria-label="раздел скоро">
+                <span className="module-tab-soon" aria-label="раздел в разработке">
                   скоро
                 </span>
               )}

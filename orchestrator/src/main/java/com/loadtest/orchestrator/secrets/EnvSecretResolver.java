@@ -18,6 +18,7 @@ public class EnvSecretResolver implements SecretResolver {
             return Optional.of(direct.trim());
         }
         String envName = switch (vaultPath) {
+            case "loadtest/postgres/password" -> "SPRING_DATASOURCE_PASSWORD";
             case "loadtest/s3/access-key" -> "S3_ACCESS_KEY";
             case "loadtest/s3/secret-key" -> "S3_SECRET_KEY";
             case "loadtest/gitlab/trigger-token" -> "GITLAB_TRIGGER_TOKEN";

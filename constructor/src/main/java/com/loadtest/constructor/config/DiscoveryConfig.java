@@ -43,6 +43,8 @@ public class DiscoveryConfig {
         private int port = 8500;
         private String datacenter = "";
         private String kvPrefix = "loadtest/";
+        /** ACL из ConfigMap, если нет CONSUL_HTTP_TOKEN. */
+        private String aclToken = "";
         private String serviceFrontend = "loadtest-frontend";
         private String serviceConstructor = "loadtest-constructor";
         private String serviceAnalyzer = "loadtest-analyzer";
@@ -89,6 +91,14 @@ public class DiscoveryConfig {
 
         public void setKvPrefix(String kvPrefix) {
             this.kvPrefix = kvPrefix;
+        }
+
+        public String getAclToken() {
+            return aclToken;
+        }
+
+        public void setAclToken(String aclToken) {
+            this.aclToken = aclToken;
         }
 
         public String getServiceFrontend() {
@@ -158,6 +168,7 @@ public class DiscoveryConfig {
         private String jmeterBuilderUrl = "";
         private String gatlingGeneratorUrl = "";
         private String postgresJdbcUrl = "";
+        private String postgresUsername = "";
 
         public String getFrontendApiBaseUrl() {
             return frontendApiBaseUrl;
@@ -222,12 +233,23 @@ public class DiscoveryConfig {
         public void setPostgresJdbcUrl(String postgresJdbcUrl) {
             this.postgresJdbcUrl = postgresJdbcUrl;
         }
+
+        public String getPostgresUsername() {
+            return postgresUsername;
+        }
+
+        public void setPostgresUsername(String postgresUsername) {
+            this.postgresUsername = postgresUsername;
+        }
     }
 
     public static class Vault {
         private boolean enabled = false;
         private String address = "";
         private String kvPath = "";
+        /** AppRole, если нет VAULT_TOKEN. */
+        private String roleId = "";
+        private String secretId = "";
 
         public boolean isEnabled() {
             return enabled;
@@ -251,6 +273,22 @@ public class DiscoveryConfig {
 
         public void setKvPath(String kvPath) {
             this.kvPath = kvPath;
+        }
+
+        public String getRoleId() {
+            return roleId;
+        }
+
+        public void setRoleId(String roleId) {
+            this.roleId = roleId;
+        }
+
+        public String getSecretId() {
+            return secretId;
+        }
+
+        public void setSecretId(String secretId) {
+            this.secretId = secretId;
         }
     }
 }

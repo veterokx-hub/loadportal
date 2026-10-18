@@ -14,6 +14,8 @@ export function SaveScenarioDialog({
   title,
   message,
   defaultEngine = "jmeter",
+  confirmLabel = "Сохранить сборку",
+  discardLabel = "Не сохранять",
   onCancel,
   onDone,
 }: {
@@ -21,6 +23,8 @@ export function SaveScenarioDialog({
   title: string;
   message: string;
   defaultEngine?: Engine;
+  confirmLabel?: string;
+  discardLabel?: string;
   onCancel: () => void;
   /** Вызывается после сохранения (saved=true) или при «продолжить без сохранения». */
   onDone: (saved: boolean) => void;
@@ -48,17 +52,19 @@ export function SaveScenarioDialog({
         <p className="muted">{message}</p>
 
         <div className="field">
-          <label>Движок для сохранения</label>
+          <label>Движок сборки</label>
           <div className="inline">
             {ENGINES.map((e) => (
-              <div
+              <button
+                type="button"
+                aria-pressed={engine === e.id}
                 key={e.id}
                 className={`pill-source pill-engine ${engine === e.id ? "active" : ""}`}
                 onClick={() => setEngine(e.id)}
               >
                 {e.label}
                 <span className="pill-engine-tagline">{e.tagline}</span>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -71,10 +77,10 @@ export function SaveScenarioDialog({
           </button>
           <div className="inline" style={{ gap: 8 }}>
             <button className="ghost" onClick={() => onDone(false)} disabled={saving}>
-              Не сохранять
+              {discardLabel}
             </button>
             <button onClick={saveAndContinue} disabled={saving}>
-              {saving ? "Сохраняем…" : "Сохранить сборку"}
+              {saving ? "Сохраняем…" : confirmLabel}
             </button>
           </div>
         </div>

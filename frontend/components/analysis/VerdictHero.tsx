@@ -60,7 +60,7 @@ export function VerdictHero({ report }: { report: AnalysisReport }) {
             {TEST_KIND_META[report.test_kind]?.label ?? report.test_kind}
           </span>
           {report.demo && (
-            <span className="tag verdict-demo" title="Синтетические данные: так модуль выглядит в работе">
+            <span className="tag verdict-demo" title="Отчёт построен на синтетических данных">
               демо-данные
             </span>
           )}
@@ -86,7 +86,7 @@ export function VerdictHero({ report }: { report: AnalysisReport }) {
 
         {!report.validity.valid && (
           <div className="verdict-warning">
-            <strong>Прогон под вопросом.</strong> {report.validity.reasons.join(" ")}
+            <strong>Прогон под вопросом:</strong> {report.validity.reasons.join("; ")}.
           </div>
         )}
       </div>

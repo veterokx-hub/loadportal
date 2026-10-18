@@ -22,7 +22,7 @@ export function ModulePlaceholder({
       </div>
 
       <div className="module-placeholder-body">
-        <h3>Что появится в этом разделе</h3>
+        <h3>Что появится в разделе</h3>
         <ul className="module-preview-list">
           {module.preview.map((item) => (
             <li key={item}>
@@ -56,13 +56,12 @@ export function ModulePlaceholder({
         </div>
 
         <p className="hint" style={{ marginTop: 16 }}>
-          Сейчас доступны разделы «Сценарий» и «Запуск». Остальные модули подключаются по
-          мере внедрения платформы.
+          Сейчас работают «Сценарий», «Запуск» и «Анализ». Этот раздел в разработке.
         </p>
 
         <div className="footer-nav" style={{ marginTop: 20 }}>
           <Link href={scenarioPath("source")} className="ghost">
-            ← К подготовке сценария
+            ← К сценарию
           </Link>
         </div>
       </div>

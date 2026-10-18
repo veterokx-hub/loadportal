@@ -94,8 +94,7 @@ export function AnalysisDetail({
           <div>
             <strong>{ANALYSIS_STATUS_LABELS[row.status]}</strong>
             <p className="muted">
-              Читаем метрики за окно теста, размечаем фазы и прогоняем детекторы. Длинный тест —
-              десятки запросов в источник, поэтому это занимает от секунд до пары минут.
+              Читаем метрики, размечаем фазы и ищем аномалии — от нескольких секунд до пары минут.
               Страница обновится сама.
             </p>
           </div>
@@ -104,7 +103,7 @@ export function AnalysisDetail({
 
       {row.status === "failed" && (
         <div className="error analysis-failed">
-          <strong>Анализ не удался.</strong> {row.error_message || "Причина не записана."}
+          <strong>Анализ не удался.</strong> {row.error_message || "Причина не указана."}
         </div>
       )}
 

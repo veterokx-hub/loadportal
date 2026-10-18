@@ -204,7 +204,7 @@ export function LoadChart({ series }: { series: Series[] }) {
           const t = (maxT * i) / xTicks;
           return (
             <text key={`x${i}`} x={x(t)} y={H - padB + 16} textAnchor="middle" fontSize={10} fill="var(--muted)">
-              {Math.round(t)}с
+              {Math.round(t)} с
             </text>
           );
         })}
@@ -348,7 +348,7 @@ export function LoadChart({ series }: { series: Series[] }) {
                 opacity: dimmed ? 0.4 : 1,
                 textDecoration: isolated === s.label ? "underline" : "none",
               }}
-              title={`${s.label}\nНаведите — подсветить; клик — показать только этот запрос`}
+              title={`${s.label}\nКлик — показать только эту группу`}
             >
               <span
                 className="swatch"
@@ -365,7 +365,7 @@ export function LoadChart({ series }: { series: Series[] }) {
         })}
         {isolated && (
           <button className="ghost small" onClick={() => setIsolated(null)} style={{ marginLeft: 8 }}>
-            показать все
+            Показать все
           </button>
         )}
       </div>

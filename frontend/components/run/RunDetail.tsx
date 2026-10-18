@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cancelRun, getRun } from "@/lib/api";
 import { RUN_STATUS_LABELS, VERDICT_LABELS } from "@/lib/run-status";
 import { safeHttpHref } from "@/lib/safe-url";
@@ -18,26 +18,30 @@ export function RunDetail({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [canceling, setCanceling] = useState(false);
+  // Колбэк родителя меняется на каждом его рендере, а load его вызывает.
+  // Если держать его в зависимостях, карточка запрашивает прогон без остановки.
+  const onRefreshListRef = useRef(onRefreshList);
+  onRefreshListRef.current = onRefreshList;
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       setRun(await getRun(runId));
-      onRefreshList();
+      onRefreshListRef.current();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [runId, onRefreshList]);
+  }, [runId]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   async function cancel() {
-    if (!window.confirm("Остановить прогон? Pipeline в GitLab будет отменён.")) return;
+    if (!window.confirm("Остановить прогон? Пайплайн в GitLab будет отменён.")) return;
     setCanceling(true);
     setError(null);
     try {
@@ -128,7 +132,7 @@ export function RunDetail({
       <div className="inline" style={{ gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         {gitlabHref && (
           <a href={gitlabHref} target="_blank" rel="noreferrer" className="pill-source">
-            Pipeline в GitLab
+            Пайплайн в GitLab
           </a>
         )}
         {grafanaHref && (

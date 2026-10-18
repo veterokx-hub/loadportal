@@ -1,11 +1,13 @@
 "use client";
 
+import type { ReactNode } from "react";
 import type { PrometheusConfig } from "@/lib/types";
 import type { Engine } from "@/lib/engines";
+import { FormSection } from "@/components/intensity/FormSection";
 
 /**
- * Выгрузка метрик — у каждого движка своя. Блоки намеренно не объединены:
- * поля показываются только там, где они реально попадают в артефакт.
+ * Выгрузка метрик — у каждого движка своя. Поля показываются только там,
+ * где они реально попадают в артефакт.
  */
 export function MetricsSection({
   engine,
@@ -18,118 +20,164 @@ export function MetricsSection({
   prom: PrometheusConfig;
   setPrometheus: (patch: Partial<PrometheusConfig>) => void;
 }) {
-  if (engine === "jmeter") {
+  if (engine === "gatling") {
     return (
-      <>
-        <h3 style={{ fontSize: 13, marginTop: 18 }}>Метрики · VictoriaMetrics</h3>
-        <p className="muted" style={{ marginTop: -6 }}>
-          В каждый .jmx ставится штатный{" "}
-          <code>InfluxdbBackendListenerClient</code>. Он шлёт Influx line protocol на{" "}
-          <code>/write</code> VictoriaMetrics. Отдельный jar не нужен.
-        </p>
-        <div className="field">
-          <label>Адрес VictoriaMetrics</label>
+      <FormSection
+        title="Метрики"
+        aside={<span className="tag">отчёт Gatling</span>}
+        lead={
+          <>
+            HTML-отчёт собирается в <code>target/gatling/</code>, в VictoriaMetrics Gatling не пишет.
+          </>
+        }
+        details={[
+          <>
+            <code>runId</code> и имя сценария попадают в <code>runDescription</code> файла{" "}
+            <code>gatling.conf</code> — так прогон подписан в отчёте.
+          </>,
+        ]}
+      >
+        <div className="compact-grid">
+          <div className="field span-2">
+            <label htmlFor="prom-run-id">runId</label>
+            <input
+              id="prom-run-id"
+              value={prom.run_id}
+              onChange={(e) => setPrometheus({ run_id: e.target.value })}
+            />
+          </div>
+        </div>
+      </FormSection>
+    );
+  }
+
+  const jmeter = engine === "jmeter";
+  const url = prom.influxdb_url.trim();
+  const urlWarn = jmeter && /[,}]/.test(url) ? "Запятая и «}» в адресе ломают свойство JMeter" : null;
+
+  const details: ReactNode[] = jmeter
+    ? [
+        <>
+          В .jmx добавляется <code>InfluxdbBackendListenerClient</code>: Influx line protocol на{" "}
+          <code>/write</code>, отдельный jar не нужен.
+        </>,
+        <>
+          Токен уходит заголовком <code>Authorization: Token</code>. Тег <code>runId</code> приходит из{" "}
+          <code>-JrunId</code>.
+        </>,
+        <>
+          Раннер может подменить адрес свойством <code>influxdb_url</code>.
+        </>,
+      ]
+    : [
+        <>
+          В архив кладётся <code>vm.json</code>, раннер запускает k6 с{" "}
+          <code>-o experimental-prometheus-rw</code>. Адрес <code>/write</code> заменяется на{" "}
+          <code>/api/v1/write</code>.
+        </>,
+        <>
+          Токен уходит заголовком <code>Authorization: Bearer</code> и в скрипт не пишется.
+        </>,
+        <>
+          Теги <code>application</code>, <code>measurement</code>, <code>runId</code> ставятся на каждую
+          серию; <code>runId</code> перекрывает <code>LT_RUN_ID</code>, адрес — <code>LT_INFLUX_URL</code>{" "}
+          или <code>K6_PROMETHEUS_RW_SERVER_URL</code>.
+        </>,
+      ];
+
+  return (
+    <FormSection
+      title="Метрики"
+      aside={<span className="tag">VictoriaMetrics</span>}
+      lead={
+        jmeter
+          ? "JMeter шлёт метрики через Influx line protocol."
+          : "k6 шлёт метрики через Prometheus remote write."
+      }
+      details={details}
+    >
+      <div className="compact-grid">
+        <div className="field mono span-8">
+          <label htmlFor="prom-url">Адрес записи</label>
           <input
+            id="prom-url"
             value={prom.influxdb_url}
             placeholder="http://victoriametrics:8428/write?db=jmeter"
+            aria-invalid={urlWarn ? true : undefined}
             onChange={(e) => setPrometheus({ influxdb_url: e.target.value })}
           />
+          {urlWarn && <span className="field-warn">{urlWarn}</span>}
         </div>
-        <div className="field">
-          <label>Токен</label>
+        <div className="field span-4">
+          <label htmlFor="prom-token">Токен</label>
           <input
+            id="prom-token"
             type="password"
             autoComplete="off"
             value={prom.influxdb_token}
-            placeholder="пусто, если авторизация не нужна"
+            placeholder="без авторизации"
             onChange={(e) => setPrometheus({ influxdb_token: e.target.value })}
           />
         </div>
-        <div className="row" style={{ alignItems: "flex-end" }}>
-          <div className="field">
-            <label>application</label>
-            <input
-              value={prom.application}
-              placeholder={scenarioName || "имя сценария"}
-              onChange={(e) => setPrometheus({ application: e.target.value })}
-            />
-          </div>
-          <div className="field" style={{ width: 160, flex: "none" }}>
-            <label>measurement</label>
-            <input
-              value={prom.measurement}
-              placeholder="jmeter"
-              onChange={(e) => setPrometheus({ measurement: e.target.value })}
-            />
-          </div>
+
+        <div className={`field ${jmeter ? "span-3" : "span-4"}`}>
+          <label htmlFor="prom-app" title="Тег application на каждой точке">
+            application
+          </label>
+          <input
+            id="prom-app"
+            value={prom.application}
+            placeholder={scenarioName || "имя сценария"}
+            onChange={(e) => setPrometheus({ application: e.target.value })}
+          />
         </div>
-        <div className="row" style={{ alignItems: "flex-end" }}>
-          <div className="field">
-            <label>samplersRegex</label>
+        <div className={`field ${jmeter ? "span-3" : "span-4"}`}>
+          <label htmlFor="prom-measurement">measurement</label>
+          <input
+            id="prom-measurement"
+            value={prom.measurement}
+            placeholder="jmeter"
+            onChange={(e) => setPrometheus({ measurement: e.target.value })}
+          />
+        </div>
+        <div className={`field mono ${jmeter ? "span-3" : "span-4"}`}>
+          <label htmlFor="prom-percentiles" title="Через точку с запятой">
+            percentiles
+          </label>
+          <input
+            id="prom-percentiles"
+            value={prom.percentiles}
+            placeholder="99;95;90"
+            onChange={(e) => setPrometheus({ percentiles: e.target.value })}
+          />
+        </div>
+        {jmeter && (
+          <div className="field mono span-3">
+            <label htmlFor="prom-samplers" title="Какие сэмплеры отправлять">
+              samplersRegex
+            </label>
             <input
+              id="prom-samplers"
               value={prom.samplers_reg_exp}
               placeholder=".*"
               onChange={(e) => setPrometheus({ samplers_reg_exp: e.target.value })}
             />
           </div>
-          <div className="field" style={{ width: 180, flex: "none" }}>
-            <label>percentiles</label>
-            <input
-              value={prom.percentiles}
-              placeholder="99;95;90"
-              onChange={(e) => setPrometheus({ percentiles: e.target.value })}
-            />
+        )}
+        {jmeter && (
+          <div className="field span-12">
+            <label className="check-inline">
+              <input
+                type="checkbox"
+                checked={prom.summary_only}
+                onChange={(e) => setPrometheus({ summary_only: e.target.checked })}
+              />
+              Только сводка
+              <span className="muted">— без метрик по каждому запросу</span>
+            </label>
           </div>
-        </div>
-        <label className="inline" style={{ textTransform: "none", marginBottom: 8 }}>
-          <input
-            type="checkbox"
-            style={{ width: "auto" }}
-            checked={prom.summary_only}
-            onChange={(e) => setPrometheus({ summary_only: e.target.checked })}
-          />
-          <span>Только сводка, без метрик по каждому запросу</span>
-        </label>
-        <div className="hint">
-          Раннер может подменить адрес свойством <code>influxdb_url</code>. В адресе не должно
-          быть запятой и <code>{"}"}</code>: JMeter режет значение по умолчанию у{" "}
-          <code>__P</code> по запятой. Метка прогона <code>runId</code> приходит как{" "}
-          <code>-JrunId</code> и пишется тегом на каждую точку. Токен уходит заголовком{" "}
-          <code>Authorization: Token …</code>.
-        </div>
-      </>
-    );
-  }
-
-  if (engine === "k6") {
-    return (
-      <>
-        <h3 style={{ fontSize: 13, marginTop: 18 }}>Метрики · встроенные k6</h3>
-        <p className="muted" style={{ marginTop: -6 }}>
-          Скрипт пишет стандартные метрики k6 и <code>portal_errors</code> (провал валидации
-          или сетевой сбой). Вывод задаётся флагами запуска (<code>--out</code>).
-        </p>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <h3 style={{ fontSize: 13, marginTop: 18 }}>Метрики · отчёт Gatling</h3>
-      <p className="muted" style={{ marginTop: -6 }}>
-        Прогон пишет <code>console</code> и <code>simulation.log</code>, HTML-отчёт
-        собирается в <code>target/gatling/</code>.
-      </p>
-      <div className="row" style={{ alignItems: "flex-end" }}>
-        <div className="field" style={{ width: 100, flex: "none" }}>
-          <label>runId</label>
-          <input value={prom.run_id} onChange={(e) => setPrometheus({ run_id: e.target.value })} />
-        </div>
+        )}
       </div>
-      <div className="hint">
-        runId и имя сценария уходят в <code>runDescription</code> внутри{" "}
-        <code>src/test/resources/gatling.conf</code> — так прогон подписан в отчёте.
-      </div>
-    </>
+    </FormSection>
   );
 }

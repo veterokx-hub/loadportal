@@ -90,7 +90,7 @@ export function PhaseTimeline({
               className={`phase-seg phase-${phase.kind} ${phase.excluded ? "excluded" : ""}`}
               style={{ left: `${left}%`, width: `${width}%` }}
               title={`${meta.label} · ${formatDurationSec(sec)}${
-                phase.rps > 0 ? ` · ~${Math.round(phase.rps)} rps` : ""
+                phase.rps > 0 ? ` · ~${Math.round(phase.rps)} RPS` : ""
               }\n${meta.hint}${phase.excluded ? "\nФаза исключена из выводов." : ""}`}
             />
           );

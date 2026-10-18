@@ -68,7 +68,7 @@ export function PortalChrome({ children }: { children: React.ReactNode }) {
     <div className="app">
       <div className="topbar">
         <div className="brand">
-          <span className="mark" aria-label="эмблема" role="img">
+          <span className="mark" aria-label="Эмблема портала" role="img">
             <LogoMark size={48} />
           </span>
           <div>
@@ -122,7 +122,7 @@ export function PortalChrome({ children }: { children: React.ReactNode }) {
             className="btn-toolbar"
             onClick={() => setSessionsOpen(true)}
             title="Сессии"
-            aria-label="Список сессий"
+            aria-label="Активные сессии"
           >
             <span className="btn-toolbar-icon" aria-hidden>
               ⌘
@@ -134,7 +134,7 @@ export function PortalChrome({ children }: { children: React.ReactNode }) {
             className="btn-toolbar btn-toolbar-muted"
             onClick={logout}
             title="Выйти на всех устройствах"
-            aria-label="Выйти из портала"
+            aria-label="Выйти на всех устройствах"
           >
             <span className="btn-toolbar-icon" aria-hidden>
               ⎋

@@ -3,9 +3,13 @@
 # =============================================================================
 # Единый конфиг адресов и discovery для Load Test Portal.
 # В k8s монтируется как ConfigMap в pod constructor и orchestrator.
+# Подключение к Consul/Vault в кластере задаёт config/platform.properties
+# (ключи spring.cloud.consul.* и spring.cloud.vault.app-role.*). Он перекрывает
+# consul.* и vault.* ниже. Этот файл остаётся для URL модулей и TTL.
 #
-# Секреты (пароли БД, LDAP bind, bootstrap-admin, Vault token) — НЕ здесь.
-# Секреты хранятся в Vault; в k8s подставляются через External Secrets / CSI / Argo.
+# Секреты (пароль БД, LDAP bind, bootstrap-admin, Vault token) — НЕ здесь.
+# Пароль БД — Vault loadtest/postgres, поле password. Локально env SPRING_DATASOURCE_PASSWORD.
+# Секреты в k8s подставляются через External Secrets / CSI / Argo.
 #
 # Приоритет URL модулей:
 #   1) modules.*-url (если не пусто)
@@ -42,7 +46,7 @@ loadtest:
       enabled: false
       address: http://vault.corp.example:8200
       # Имя KV v2 mount. URL: {address}/v1/{kv-path}/data/{vault-path}
-      # Токен чтения — env VAULT_TOKEN (или Vault Agent), не в этом файле.
+      # Токен: VAULT_TOKEN, иначе AppRole из platform.properties. Не в этом файле.
       kv-path: secret
 
     # --- Все адреса модулей (включая frontend → backend) ---
@@ -60,7 +64,10 @@ loadtest:
       gatling-generator-url: http://localhost:8002
       jmeter-builder-url: http://localhost:8081
       analysis-url: http://localhost:8003
+      # Если Consul выключен. KV postgres/url и postgres/username перекрывают эти поля.
+      # Явный SPRING_DATASOURCE_URL / SPRING_DATASOURCE_USERNAME перекрывает ConfigMap.
       postgres-jdbc-url: jdbc:postgresql://localhost:5432/loadtest
+      postgres-username: loadtest
 
   # CORS allowlist. В k8s обязательно заменить на Origin из браузера
   # (DevTools → любой /api → Request Headers → Origin). Не Service frontend, не «*».
@@ -77,7 +84,11 @@ loadtest:
   #   ad/user-search-base  ad/user-search-filter  ad/bind-dn
   #   victoriametrics/url  victoriametrics/concurrency  victoriametrics/timeout-sec
   #   analysis/demo  analysis/auto-on-finish
-  # Секреты — Vault KV v2, поле data.value (или единственный ключ):
+  #   loadtest/postgres/url  loadtest/postgres/username
+  #   (или YAML-документ с loadtest.postgres.url; старый ключ postgres/url тоже читается)
+  # Секреты — Vault KV v2. Пароль БД: секрет loadtest/postgres, поле password
+  #   (также loadtest/postgres/password поле value и loadtest.postgres.password в application):
+  #   loadtest/postgres/password
   #   loadtest/s3/access-key  loadtest/s3/secret-key
   #   loadtest/gitlab/trigger-token  loadtest/gitlab/webhook-secret  loadtest/gitlab/api-token
   #   loadtest/ad/bind-password

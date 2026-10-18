@@ -13,7 +13,7 @@ const GENERATORS: { value: GeneratorType; label: string }[] = [
 ];
 
 const TS_PRESETS: { value: string; label: string }[] = [
-  { value: "", label: "мс (Unix)" },
+  { value: "", label: "Unix, мс" },
   { value: "yyyy-MM-dd", label: "yyyy-MM-dd" },
   { value: "yyyy-MM-dd'T'HH:mm:ss", label: "yyyy-MM-dd'T'HH:mm:ss" },
   { value: "dd.MM.yyyy HH:mm:ss", label: "dd.MM.yyyy HH:mm:ss" },
@@ -32,18 +32,18 @@ const KIND_LABEL: Record<ParamSource["kind"], string> = {
 function GenSlot({
   label,
   title,
-  wide,
+  pattern,
   children,
 }: {
   label: string;
   title?: string;
-  wide?: boolean;
+  pattern?: boolean;
   children: ReactNode;
 }) {
   return (
-    <label className={`param-gen-slot${wide ? " wide" : ""}`} title={title}>
-      <span className="param-gen-label">{label}</span>
+    <label className={`param-gen-slot${pattern ? " pattern" : ""}`} title={title}>
       {children}
+      <span className="param-gen-label">{label}</span>
     </label>
   );
 }
@@ -189,7 +189,7 @@ export function ParamSourceEditor({
                     }
                   />
                 </GenSlot>
-                <GenSlot label="Макс" title="0 — без ограничения, по достижении снова старт">
+                <GenSlot label="Макс" title="0 — без ограничения. После максимума счёт начнётся со старта">
                   <NumberField
                     fieldId="cnt-max"
                     value={source.generator.max ?? 0}
@@ -202,7 +202,7 @@ export function ParamSourceEditor({
                     }
                   />
                 </GenSlot>
-                <GenSlot label="Формат" title="Маска нулей, например 000 → 001">
+                <GenSlot label="Формат" title="Маска с ведущими нулями: 000 → 001">
                   <input
                     placeholder="000"
                     value={source.generator.format ?? ""}
@@ -236,9 +236,8 @@ export function ParamSourceEditor({
             )}
             {source.generator.type === "timestamp" && (
               <div className="param-gen-extras">
-                <GenSlot label="Формат" wide>
+                <GenSlot label="Формат" pattern>
                   <select
-                    className="wide"
                     value={tsIsOther ? TS_OTHER : tsFormat}
                     onChange={(e) => {
                       const v = e.target.value;
@@ -260,7 +259,7 @@ export function ParamSourceEditor({
                   </select>
                 </GenSlot>
                 {tsIsOther && (
-                  <GenSlot label="Шаблон" wide>
+                  <GenSlot label="Шаблон" pattern>
                     <input
                       placeholder="yyyy-MM-dd HH:mm:ss"
                       value={tsFormat}
@@ -283,8 +282,15 @@ export function ParamSourceEditor({
             value={source.variable}
             onChange={(e) => onChange({ kind: "correlation", variable: e.target.value })}
           >
-            {availableVars.length === 0 && (
+            {availableVars.length === 0 && source.variable.trim() === "" && (
               <option value="">нет переменных из предыдущих запросов</option>
+            )}
+            {source.variable.trim() !== "" && !availableVars.includes(source.variable) && (
+              <option value={source.variable}>
+                ${"{"}
+                {source.variable}
+                {"}"} — не извлечена выше
+              </option>
             )}
             {availableVars.map((v) => (
               <option key={v} value={v}>
@@ -311,7 +317,7 @@ export function ParamSourceEditor({
             </select>
           ) : (
             <input
-              placeholder="сначала выберите датасет запроса"
+              placeholder="сначала выберите датасет"
               value={source.column}
               onChange={(e) => onChange({ kind: "csv", column: e.target.value })}
             />

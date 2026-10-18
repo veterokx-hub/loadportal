@@ -7,11 +7,14 @@ import { groupRequests, groupTitle, groupIntensity } from "@/lib/grouping";
 import {
   arrivalRate,
   formatRps,
+  groupBalance,
   groupProfile,
   iterationWeights,
+  repeatCount,
   requestShareRps,
   samplesPerIteration,
   throughputPercent,
+  weightedRps,
 } from "@/lib/profile";
 import { ENGINE_META, ENGINES, runCommand, type Engine } from "@/lib/engines";
 import { LoadChart, CHART_COLORS, type Series } from "@/components/LoadChart";
@@ -117,6 +120,12 @@ export function Step4Intensity({
     scenario.requests.forEach((r) =>
       updateRequest(r.id, { intensity: { ...r.intensity, ...patch } })
     );
+  }
+
+  function setGroupBalance(groupKey: string, balance: "percent" | "repeat") {
+    const g = groups.find((x) => x.key === groupKey);
+    if (!g) return;
+    g.requests.forEach((r) => updateRequest(r.id, { balance }));
   }
 
   const first = groups[0] ? groupIntensity(groups[0]) : null;
@@ -355,14 +364,19 @@ export function Step4Intensity({
       <FormSection
         mark={healthMark("intensity")}
         title="Интенсивность по группам"
-        lead="Запросы, связанные корреляцией или общим CSV, — одна группа с одним целевым RPS. Процент — доля итераций, в которых запрос выполняется."
+        lead="Запросы, связанные корреляцией или общим CSV, — одна группа с одним целевым RPS. Внутри группы — процент итераций или число повторов за проход."
         details={[
-          <>{meta.throughputTitle}.</>,
           <>
-            100% — каждый проход. Меньше — реже, доля RPS пропорциональна проценту. Пример: логин 20% и витрина 100% дают соотношение 1:5.
+            {meta.throughputTitle}. {meta.repeatTitle}.
           </>,
           <>
-            Если запрос с извлечением переменной реже 100%, следующий запрос группы иногда пойдёт без нового значения. В smoke каждый запрос выполняется всегда.
+            Процент: 100 — каждый проход, меньше — реже. Пример: логин 20% и витрина 100% дают соотношение 1:5.
+          </>,
+          <>
+            Повторы: запрос выполняется указанное число раз на каждом проходе. Пример: логин ×1 и витрина ×5 дают то же соотношение 1:5.
+          </>,
+          <>
+            Если запрос с извлечением переменной реже 100%, следующий запрос группы иногда пойдёт без нового значения. В режиме повторов извлечение отрабатывает каждый проход. В smoke при проценте каждый запрос выполняется всегда.
           </>,
         ]}
       >
@@ -378,6 +392,7 @@ export function Step4Intensity({
           </thead>
           <tbody>
             {groups.map((g, i) => {
+              const mode = groupBalance(g.requests);
               const samples = samplesPerIteration(g.requests);
               const weights = iterationWeights(g.requests);
               const httpRps = groupIntensity(g).target_rps;
@@ -385,6 +400,7 @@ export function Step4Intensity({
               return (
               <tr key={g.key}>
                 <td>
+                  <div className="group-mix">
                   <span
                     className="swatch"
                     style={{
@@ -392,15 +408,67 @@ export function Step4Intensity({
                       display: "inline-block",
                       width: 10,
                       height: 10,
-                      marginRight: 8,
                     }}
                   />
+                  {balanced && (
+                    <span className="balance-pills">
+                      <button
+                        type="button"
+                        className={`balance-pill ${mode === "percent" ? "active" : ""}`}
+                        aria-pressed={mode === "percent"}
+                        onClick={() => setGroupBalance(g.key, "percent")}
+                      >
+                        Процент
+                      </button>
+                      <button
+                        type="button"
+                        className={`balance-pill ${mode === "repeat" ? "active" : ""}`}
+                        aria-pressed={mode === "repeat"}
+                        onClick={() => setGroupBalance(g.key, "repeat")}
+                      >
+                        Повторы
+                      </button>
+                    </span>
+                  )}
                   {g.requests.map((r, ri) => {
                     const percent = Math.round(weights[ri] * 100);
+                    const times = repeatCount(r.repeat);
+                    const share =
+                      mode === "repeat"
+                        ? weightedRps(httpRps, times, samples)
+                        : reqRps(g, r.throughput ?? percent);
                     return (
                     <span key={r.id} style={{ marginRight: 10, whiteSpace: "nowrap" }}>
                       <span className={`method ${r.method}`}>{r.method}</span> {r.name}
-                      {balanced && (
+                      {balanced && mode === "repeat" && (
+                        <>
+                          <span className="muted" style={{ marginLeft: 4 }}>
+                            <NumberField
+                              fieldId={`repeat-${r.id}`}
+                              value={times}
+                              min={1}
+                              title={meta.repeatTitle}
+                              style={{ width: 52, padding: "2px 4px", marginLeft: 2 }}
+                              onCommit={(n) =>
+                                updateRequest(r.id, {
+                                  repeat: repeatCount(n),
+                                  balance: "repeat",
+                                })
+                              }
+                              onValidity={markField}
+                            />
+                            раз
+                          </span>
+                          <span
+                            className="tag"
+                            title="Доля RPS группы, пропорционально числу повторов"
+                            style={{ marginLeft: 4 }}
+                          >
+                            ≈{formatRps(share)}/с
+                          </span>
+                        </>
+                      )}
+                      {balanced && mode === "percent" && (
                         <>
                           <span className="muted" style={{ marginLeft: 4 }}>
                             <NumberField
@@ -412,7 +480,7 @@ export function Step4Intensity({
                               onCommit={(n) =>
                                 updateRequest(r.id, {
                                   throughput: throughputPercent(n),
-                                  repeat: 1,
+                                  balance: "percent",
                                 })
                               }
                               onValidity={markField}
@@ -424,7 +492,7 @@ export function Step4Intensity({
                             title="Доля RPS группы, приходящаяся на запрос (пропорционально проценту)"
                             style={{ marginLeft: 4 }}
                           >
-                            ≈{formatRps(reqRps(g, percent))}/с
+                            ≈{formatRps(share)}/с
                           </span>
                         </>
                       )}
@@ -432,6 +500,7 @@ export function Step4Intensity({
                     );
                   })}
                   {g.datasetIds.length > 0 && <span className="badge">CSV</span>}
+                  </div>
                 </td>
                 <td>
                   <NumberField

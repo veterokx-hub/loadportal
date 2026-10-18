@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "НТ · Портал нагрузочного тестирования",
-  description: "Подготовка сценариев и запуск нагрузочного тестирования (JMeter / k6)",
+  description: "Подготовка и запуск нагрузочных тестов (JMeter / k6 / Gatling)",
   icons: {
     icon: [{ url: "/logo.jpg", type: "image/jpeg" }],
     shortcut: "/logo.jpg",

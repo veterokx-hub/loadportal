@@ -284,17 +284,17 @@ export const VERDICT_META: Record<Verdict, { label: string; tone: string; pitch:
   healthy: {
     label: "Всё чисто",
     tone: "ok",
-    pitch: "Отклонений, на которые стоит смотреть, не нашлось.",
+    pitch: "Серьёзных отклонений не нашлось.",
   },
   degraded: {
     label: "Есть к чему присмотреться",
     tone: "warn",
-    pitch: "Тест прошёл, но сервис вёл себя не идеально.",
+    pitch: "Есть важные находки, критичных нет.",
   },
   unhealthy: {
     label: "Так в прод нельзя",
     tone: "err",
-    pitch: "Нашлось то, что сломается под реальной нагрузкой.",
+    pitch: "Есть критичные находки.",
   },
   inconclusive: {
     label: "Данных не хватило",
@@ -311,31 +311,31 @@ export const SEVERITY_META: Record<Severity, { label: string; tone: string; icon
 };
 
 export const PHASE_META: Record<PhaseKind, { label: string; hint: string }> = {
-  warmup: { label: "Прогрев", hint: "JIT компилирует, кэши пустые — находки здесь не в счёт" },
+  warmup: { label: "Прогрев", hint: "JIT компилирует, кэши холодные" },
   ramp: { label: "Разгон", hint: "Нагрузка растёт: рост метрик здесь ожидаем" },
   plateau: { label: "Плато", hint: "Нагрузка постоянна — главная фаза для выводов" },
   step: { label: "Ступень", hint: "Ступень поиска максимума" },
-  cooldown: { label: "Спад", hint: "Генератор остановлен: видно, отпустило ли сервис" },
+  cooldown: { label: "Спад", hint: "Нагрузка падает: видно, вернулся ли сервис в норму" },
   idle: { label: "Простой", hint: "Нагрузки нет" },
 };
 
 export const DETECTOR_META: Record<DetectorKind, { label: string; hint: string }> = {
   level: { label: "Сдвиг уровня", hint: "Метрика ушла от своей же медианы внутри фазы" },
   drift: { label: "Дрейф", hint: "Устойчивый тренд на постоянной нагрузке" },
-  invariant: { label: "Правило", hint: "Нарушен порог из каталога или SLO сценария" },
-  event: { label: "Событие", hint: "Рестарт, throttling, срабатывание autostop" },
+  invariant: { label: "Правило", hint: "Нарушен порог из каталога или заданный SLO" },
+  event: { label: "Событие", hint: "Рестарт, OOMKilled, выпавшая реплика, сетевые ошибки" },
   capacity: { label: "Ёмкость", hint: "Точка перелома в поиске максимума" },
 };
 
 export const TEST_KIND_META: Record<TestKind, { label: string; hint: string }> = {
   ramp_hold: { label: "Разгон и плато", hint: "Классический тест на заданной интенсивности" },
   max_search: { label: "Поиск максимума", hint: "Ступени вверх до отказа" },
-  endurance: { label: "Надёжность", hint: "8–24 часа на постоянной нагрузке" },
+  endurance: { label: "Стабильность", hint: "8–24 часа на постоянной нагрузке" },
 };
 
 export const ANALYSIS_STATUS_LABELS: Record<AnalysisStatus, string> = {
   queued: "В очереди",
-  running: "Считает",
+  running: "Идёт",
   succeeded: "Готов",
   failed: "Ошибка",
 };
@@ -343,8 +343,8 @@ export const ANALYSIS_STATUS_LABELS: Record<AnalysisStatus, string> = {
 /** Профили дефектов демо-режима — чтобы можно было посмотреть модуль без кластера. */
 export const DEMO_FAULTS = [
   { id: "leak", label: "Утечка памяти", hint: "Heap ползёт вверх на плато, GC не успевает" },
-  { id: "pool", label: "Пул соединений", hint: "Очередь за коннектом к БД, хвост ответа уезжает" },
-  { id: "throttle", label: "CPU throttling", hint: "Лимит контейнера режет вычисления" },
+  { id: "pool", label: "Пул соединений", hint: "Очередь за соединением к БД, растёт p99" },
+  { id: "throttle", label: "CPU throttling", hint: "Лимит CPU контейнера тормозит обработку" },
   { id: "clean", label: "Здоровый прогон", hint: "Ни одной находки — так выглядит норма" },
 ] as const;
 

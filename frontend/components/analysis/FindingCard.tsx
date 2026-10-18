@@ -14,15 +14,15 @@ import { Sparkline } from "./Sparkline";
 /** Подписи полей доказательной базы. Порядок — от «что видно» к «как посчитано». */
 const EVIDENCE_ROWS: { key: keyof Finding["evidence"]; label: string; hint: string }[] = [
   { key: "observed", label: "Наблюдалось", hint: "Значение в найденном интервале" },
-  { key: "baseline", label: "База", hint: "Медиана до отклонения" },
-  { key: "threshold", label: "Порог", hint: "Порог правила или лимит контейнера" },
-  { key: "deviation_pct", label: "Отклонение", hint: "Насколько ушло от базы" },
-  { key: "slope_pct_per_hour", label: "Скорость роста", hint: "Процентов в час" },
-  { key: "projection_hours", label: "Запас", hint: "Часов до порога при этой скорости" },
+  { key: "baseline", label: "База", hint: "Опорный уровень: медиана фазы или начало тренда" },
+  { key: "threshold", label: "Порог", hint: "Порог правила или SLO" },
+  { key: "deviation_pct", label: "Отклонение", hint: "Насколько ушло от базы или порога" },
+  { key: "slope_pct_per_hour", label: "Тренд", hint: "Изменение в процентах за час" },
+  { key: "projection_hours", label: "Запас", hint: "Часов до лимита при текущем росте" },
   { key: "breach_sec", label: "Держалось", hint: "Сколько длилось нарушение" },
   { key: "robust_z", label: "Робастная z", hint: "В скольких σ от медианы; σ по MAD" },
   { key: "p_value", label: "p-value", hint: "Вероятность увидеть такой тренд на случайном ряде" },
-  { key: "at_rps", label: "При нагрузке", hint: "RPS в момент находки" },
+  { key: "at_rps", label: "При нагрузке", hint: "RPS фазы, где найдено отклонение" },
 ];
 
 /** Часть полей доказательной базы измеряется не в единицах самой метрики. */
@@ -108,7 +108,7 @@ export function FindingCard({
           {formatDurationSec(durationSec)}
         </span>
         {finding.confidence < 50 && (
-          <span className="tag finding-doubt" title="Детектор не уверен — проверьте руками">
+          <span className="tag finding-doubt" title="Детектор не уверен — проверьте вручную">
             под вопросом
           </span>
         )}
@@ -137,7 +137,7 @@ export function FindingCard({
           </dl>
           {finding.query && (
             <div className="finding-query">
-              <span className="muted">Запрос, по которому получен ряд:</span>
+              <span className="muted">Запрос к источнику:</span>
               <code>{finding.query}</code>
             </div>
           )}

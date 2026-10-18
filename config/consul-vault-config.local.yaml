@@ -40,6 +40,7 @@ loadtest:
       jmeter-builder-url: http://jmeter-builder:8081
       analysis-url: http://analysis:8003
       postgres-jdbc-url: jdbc:postgresql://postgres:5432/loadtest
+      postgres-username: loadtest
 
   # Модуль «Анализ»: автозапуск отчёта после завершения прогона.
   # Пропускается, если у прогона не заполнена цель в кластере.

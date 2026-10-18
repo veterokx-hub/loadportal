@@ -7,6 +7,30 @@ export function throughputPercent(value: number | null | undefined): number {
   return Math.min(100, Math.max(1, Math.round(value)));
 }
 
+/** Число повторов за итерацию. Пустое и неположительное — 1. */
+export function repeatCount(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value)) return 1;
+  return Math.max(1, Math.round(value));
+}
+
+/**
+ * Режим группы из двух и более запросов.
+ * «Повторы», только если кто-то явно выбрал repeat и никто не закрепил percent.
+ * Один запрос режимом не управляется: он идёт каждый проход один раз.
+ */
+export function groupBalance(
+  requests: { balance?: string | null }[]
+): "percent" | "repeat" {
+  if (requests.length < 2) return "percent";
+  let repeat = false;
+  let percent = false;
+  for (const r of requests) {
+    if (r.balance === "repeat") repeat = true;
+    else if (r.balance === "percent") percent = true;
+  }
+  return repeat && !percent ? "repeat" : "percent";
+}
+
 /**
  * Доля итерации каждого запроса (0..1).
  * Один запрос в группе всегда 1: процент имеет смысл только для выравнивания внутри группы.
@@ -28,19 +52,31 @@ export function iterationWeights(
   );
 }
 
-/** Ожидаемое число HTTP-сэмплов за итерацию группы (сумма долей). */
+/** Ожидаемое число HTTP-сэмплов за итерацию: сумма долей или сумма повторов. */
 export function samplesPerIteration(
-  requests: Pick<RequestModel, "throughput" | "repeat">[]
+  requests: (Pick<RequestModel, "throughput" | "repeat"> & { balance?: string | null })[]
 ): number {
+  if (groupBalance(requests) === "repeat") {
+    const sum = requests.reduce((n, r) => n + repeatCount(r.repeat), 0);
+    return sum > 0 ? sum : 1;
+  }
   const sum = iterationWeights(requests).reduce((n, w) => n + w, 0);
   return sum > 0 ? sum : 1;
 }
 
-/** Проставляет throughput и гасит старый repeat, чтобы генераторы не читали его как цикл. */
+/**
+ * В режиме процента записывает долю. Число повторов не затирает:
+ * переключение группы обратно на повторы возвращает те же значения.
+ * В режиме повторов процент не пересчитывает.
+ */
 export function withThroughput(scenario: Scenario): RequestModel[] {
   const groups = groupRequests(scenario);
   const pct = new Map<string, number>();
+  const mode = new Map<string, "percent" | "repeat">();
   for (const g of groups) {
+    const balance = groupBalance(g.requests);
+    for (const r of g.requests) mode.set(r.id, balance);
+    if (balance === "repeat") continue;
     if (g.requests.length < 2) {
       for (const r of g.requests) pct.set(r.id, throughputPercent(r.throughput));
       continue;
@@ -49,11 +85,13 @@ export function withThroughput(scenario: Scenario): RequestModel[] {
       pct.set(g.requests[i].id, Math.round(w * 100));
     });
   }
-  return scenario.requests.map((r) => ({
-    ...r,
-    throughput: pct.get(r.id) ?? throughputPercent(r.throughput),
-    repeat: 1,
-  }));
+  return scenario.requests.map((r) => {
+    const next: RequestModel = { ...r, repeat: repeatCount(r.repeat) };
+    if (mode.get(r.id) === "repeat") next.balance = "repeat";
+    const written = pct.get(r.id);
+    if (written != null) next.throughput = written;
+    return next;
+  });
 }
 
 /** k6/Gatling: старты итераций/с, чтобы суммарный HTTP RPS = target. samples — сумма долей. */
@@ -62,10 +100,15 @@ export function arrivalRate(httpRps: number, samples: number): number {
   return samples > 0 ? http / samples : 0;
 }
 
+/** Доля HTTP RPS: weight — вклад запроса, total — сумма вкладов группы. */
+export function weightedRps(groupHttpRps: number, weight: number, total: number): number {
+  if (!(total > 0)) return 0;
+  return (Math.max(0, groupHttpRps) * Math.max(0, weight)) / total;
+}
+
 /** Доля HTTP RPS запроса внутри группы: пропорционально проценту выполнений. */
 export function requestShareRps(groupHttpRps: number, percent: number, samples: number): number {
-  if (!(samples > 0)) return 0;
-  return (Math.max(0, groupHttpRps) * (Math.max(0, percent) / 100)) / samples;
+  return weightedRps(groupHttpRps, Math.max(0, percent) / 100, samples);
 }
 
 export interface ProfilePoint {

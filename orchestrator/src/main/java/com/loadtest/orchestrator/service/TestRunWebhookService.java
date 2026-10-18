@@ -148,7 +148,7 @@ public class TestRunWebhookService {
                 run.setErrorMessage("");
             } else {
                 String message = reasons.isBlank()
-                        ? ("invalid".equals(verdict) ? "прогон невалиден" : "SLA не пройден")
+                        ? ("invalid".equals(verdict) ? "прогон недостоверен" : "SLA не пройден")
                         : reasons;
                 run.setErrorMessage(TextSupport.truncate(message, 2000));
             }

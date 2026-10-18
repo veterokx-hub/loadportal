@@ -88,9 +88,22 @@ public class JmxBuilder {
                 // Throughput Shaping Timer — профиль RPS на всю группу
                 appendWithHashTree(doc, ctgChildren, throughputShapingTimer(doc, grp.intensity(), load));
 
-                // Сэмплеры в порядке. Процент < 100 — Throughput Controller на поток.
-                // Smoke (свойство lt.mode) обходит контроллер: проверка должна увидеть каждый запрос.
+                // Сэмплеры в порядке.
+                // balance=repeat — Loop Controller, каждый проход N раз.
+                // Иначе процент < 100 — Throughput Controller на поток.
+                // Smoke (свойство lt.mode) обходит процент: проверка должна увидеть каждый запрос.
+                boolean loops = repeatMode(grp.requests());
                 for (Request req : grp.requests()) {
+                    if (loops) {
+                        int times = req.repeatOrOne();
+                        if (times <= 1) {
+                            appendSampler(doc, ctgChildren, req, base);
+                        } else {
+                            Element loop = loopController(doc, times, req.name());
+                            appendSampler(doc, appendWithHashTree(doc, ctgChildren, loop), req, base);
+                        }
+                        continue;
+                    }
                     int pct = throughputPercent(req, grp.requests());
                     if (pct >= 100) {
                         appendSampler(doc, ctgChildren, req, base);
@@ -380,6 +393,18 @@ public class JmxBuilder {
         }
     }
 
+    /** Цикл, если в группе от двух запросов и выбран balance=repeat, без явного percent. */
+    static boolean repeatMode(List<Request> members) {
+        if (members.size() < 2) return false;
+        boolean repeat = false;
+        boolean percent = false;
+        for (Request member : members) {
+            if (member.repeatBalance()) repeat = true;
+            else if ("percent".equals(member.balance())) percent = true;
+        }
+        return repeat && !percent;
+    }
+
     /** 100 — каждый проход. Группа из одного запроса не режется. null — старый repeat. */
     static int throughputPercent(Request req, List<Request> members) {
         if (members.size() < 2) return 100;
@@ -407,6 +432,14 @@ public class JmxBuilder {
         e.appendChild(stringProp(doc, "IfController.condition", expr));
         e.appendChild(boolProp(doc, "IfController.evaluateAll", false));
         e.appendChild(boolProp(doc, "IfController.useExpression", true));
+        return e;
+    }
+
+    private Element loopController(Document doc, int loops, String reqName) {
+        Element e = testElement(doc, "LoopController", "LoopControlPanel", "LoopController",
+                loops + "×: " + reqName);
+        e.appendChild(boolProp(doc, "LoopController.continue_forever", false));
+        e.appendChild(stringProp(doc, "LoopController.loops", String.valueOf(loops)));
         return e;
     }
 

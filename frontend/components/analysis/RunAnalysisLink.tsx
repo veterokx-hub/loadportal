@@ -38,7 +38,7 @@ export function RunAnalysisLink({ runId, targetFilled }: { runId: string; target
         <span className="muted">
           {targetFilled
             ? "Отчёта по этому прогону пока нет."
-            : "Отчёта нет: у прогона не заполнены cluster / namespace / service."}
+            : "Отчёта нет: у прогона не указан тестируемый сервис."}
         </span>
         <Link href={analysisNewPath(runId)} className="pill-source">
           Проанализировать

@@ -195,8 +195,9 @@ class Request(BaseModel):
     intensity: Intensity = Field(default_factory=Intensity)
     validation: Validation = Field(default_factory=Validation)
     dataset_id: Optional[str] = None
-    repeat: int = 1  # устарело: число повторов. Новые сборки шлют throughput и repeat=1
+    repeat: int = 1  # число повторов за итерацию, если balance == "repeat"
     throughput: Optional[int] = None  # процент итераций группы, 1..100
+    balance: Optional[str] = None  # "percent" | "repeat"; пусто — процент
 
 
 class TestMode(str, Enum):

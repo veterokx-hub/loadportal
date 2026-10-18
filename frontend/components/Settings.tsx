@@ -41,7 +41,7 @@ function auditTime(iso: string): string {
 function auditDetail(action: string, detail: string): string {
   if (action === "LOGIN") {
     if (detail === "ldap") return "LDAP";
-    if (detail === "local") return "локальный вход";
+    if (detail === "local") return "локальный";
   }
   return detail;
 }
@@ -173,7 +173,7 @@ export function Settings({
       await setUserPassword(name, resetPass);
       setResetPass("");
       const self = name.toLowerCase() === (getUsername() || "").toLowerCase();
-      const msg = `Пароль ${name} сброшен — сессии отозваны, при входе нужна смена пароля`;
+      const msg = `Пароль ${name} сброшен, сессии завершены. При входе потребуется задать новый.`;
       if (self && onForceLogout) {
         onForceLogout(msg);
         return;
@@ -188,6 +188,7 @@ export function Settings({
   }
 
   async function removeUser(username: string) {
+    if (!window.confirm(`Удалить пользователя ${username}? Все его сессии завершатся.`)) return;
     setTabError(null);
     setTabHint(null);
     try {
@@ -231,7 +232,7 @@ export function Settings({
       <div className="docs-panel panel settings-panel docs-panel-wide">
         <div className="docs-head">
           <h2>Настройки портала</h2>
-          <button className="ghost small" onClick={onClose}>
+          <button className="ghost small" onClick={onClose} aria-label="Закрыть">
             ✕
           </button>
         </div>
@@ -246,6 +247,7 @@ export function Settings({
           ).map(([id, label]) => (
             <button
               key={id}
+              aria-pressed={tab === id}
               className={`pill-source ${tab === id ? "active" : ""}`}
               type="button"
               onClick={() => switchTab(id)}
@@ -264,14 +266,14 @@ export function Settings({
             <section>
               <h3>Учётные записи</h3>
               <p className="hint">
-                LDAP-пользователи создаются при первом входе. Роль можно сменить здесь.
+                LDAP-пользователи появляются после первого входа с ролью USER.
               </p>
               <div className="user-filters">
                 <div className="field">
-                  <label>Имя</label>
+                  <label>Логин</label>
                   <input
                     value={userNameQ}
-                    placeholder="фильтр по логину"
+                    placeholder="часть логина"
                     onChange={(e) => setUserNameQ(e.target.value)}
                   />
                 </div>
@@ -293,7 +295,7 @@ export function Settings({
                     <tr>
                       <th>Логин</th>
                       <th>Роль</th>
-                      <th>LDAP</th>
+                      <th>Вход</th>
                       <th />
                     </tr>
                   </thead>
@@ -310,7 +312,7 @@ export function Settings({
                             disabled={u.username.toLowerCase() === "admin"}
                             title={
                               u.username.toLowerCase() === "admin"
-                                ? "Роль встроенного admin нельзя снять"
+                                ? "Роль встроенного admin изменить нельзя"
                                 : undefined
                             }
                             onChange={(e) => changeRole(u.username, e.target.value as UserRole)}
@@ -319,13 +321,15 @@ export function Settings({
                             <option value="ADMIN">ADMIN</option>
                           </select>
                         </td>
-                        <td className="muted">{u.ldap_only ? "да" : "локальный"}</td>
+                        <td className="muted">{u.ldap_only ? "только LDAP" : "локальный"}</td>
                         <td>
                           {u.username.toLowerCase() !== "admin" && (
                             <button
                               className="ghost small"
                               type="button"
                               onClick={() => removeUser(u.username)}
+                              title="Удалить пользователя"
+                              aria-label={`Удалить пользователя ${u.username}`}
                             >
                               ✕
                             </button>
@@ -345,7 +349,7 @@ export function Settings({
               </div>
               {filteredUsers.length > 5 && (
                 <p className="hint">
-                  Показаны 5 из {filteredUsers.length}. Уточните фильтр по имени или роли.
+                  Показаны 5 из {filteredUsers.length}. Уточните фильтр по логину или роли.
                 </p>
               )}
             </section>
@@ -394,7 +398,8 @@ export function Settings({
             <section>
               <h3>Сброс пароля</h3>
               <p className="hint">
-                Пользователь сменит пароль при следующем входе. Все его сессии отзываются сразу.
+                Все сессии пользователя сразу завершатся, при следующем входе он задаст новый
+                пароль.
               </p>
               <div className="row">
                 <div className="field">
@@ -493,7 +498,7 @@ export function Settings({
                   {shownAudit.length === 0 && (
                     <tr>
                       <td colSpan={4} className="muted">
-                        Пока нет записей
+                        {audit.length === 0 ? "Пока нет записей" : "Нет событий этого типа"}
                       </td>
                     </tr>
                   )}

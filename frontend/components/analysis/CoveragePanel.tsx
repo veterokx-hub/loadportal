@@ -38,7 +38,7 @@ export function CoveragePanel({ coverage, cost }: { coverage: Coverage; cost: Co
           <span className="muted">покрытие метрик</span>
         </span>
         <span className="coverage-line">
-          Прочитано {coverage.available} из {coverage.requested} рядов
+          Рядов прочитано: {coverage.available} из {coverage.requested}
           {coverage.groups_missing.length > 0 && (
             <span className="muted">
               {" "}
@@ -80,14 +80,14 @@ export function CoveragePanel({ coverage, cost }: { coverage: Coverage; cost: Co
               </span>
             )}
             <span>
-              Заняло: <strong>{(cost.duration_ms / 1000).toFixed(1)} с</strong>
+              Время анализа: <strong>{(cost.duration_ms / 1000).toFixed(1)} с</strong>
             </span>
           </div>
 
           {cost.degraded && (
             <div className="coverage-degraded">
-              Источник отвечал не полностью: {cost.degraded_reason || "часть запросов деградировала"}.
-              Выводы могли пострадать.
+              Чтение метрик деградировало: {cost.degraded_reason || "причина не указана"}. Выводы
+              могут быть неточными.
             </div>
           )}
 

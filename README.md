@@ -59,7 +59,7 @@ Browser ──► frontend (:3000)
    - Swagger/OpenAPI (URL или вставка JSON/YAML)
    - Postman Collection (JSON)
    - **С чистого листа** — пустой сценарий без спецификации
-   - Можно **подтянуть** сохранённую сборку из истории
+   - Можно **открыть** сохранённую сборку из истории
 2. **Запросы** (`/scenario/requests`)
    - Базовый URL, список методов/путей
    - Ручное добавление запросов
@@ -128,7 +128,11 @@ docker compose up --build
 | http://127.0.0.1:8003/docs | analysis (`/analyze` — `X-Internal-Token`) |
 
 Локальный конфиг: `config/consul-vault-config.local.yaml` (монтируется в constructor и orchestrator).  
-Эталон для k8s ConfigMap: `config/consul-vault-config.yaml`.
+Эталон адресов модулей для k8s: `config/consul-vault-config.yaml`.
+
+Подключение к Consul и Vault в кластере — плоский ConfigMap `config/platform.properties`. Его монтируют файлом `/config/application.properties` (переменная `LOADTEST_PLATFORM_CONFIG`) или отдают через `envFrom`. Адаптер при старте constructor, orchestrator и analysis читает `spring.cloud.consul.host`, `spring.cloud.consul.port`, `spring.cloud.consul.config.prefix`, `spring.cloud.consul.config.acl-token`, `discovery.consul.enabled`, `spring.cloud.vault.uri`, `spring.cloud.vault.kv.backend`, `spring.cloud.vault.app-role.role-id` и `secret-id`. Короткие дубли (`vault_uri`, `vault_role_id`, `consul_host`) используются, только если spring-ключа нет. Токен Vault: `VAULT_TOKEN`, иначе один логин AppRole `POST /v1/auth/approle/login`. ACL Consul: `CONSUL_HTTP_TOKEN`, иначе `acl-token`. Префикс KV получает завершающий `/`. Ключи по-прежнему конкретные: `ump/loadtest-portal/postgres/url`, не документ Spring Cloud. Docker compose этот файл не монтирует, Consul и Vault остаются выключенными.
+
+Адрес и пользователь PostgreSQL: в префиксе Consul свойство `loadtest.postgres.url` и `loadtest.postgres.username` (отдельные ключи или YAML-документ), иначе `postgres/url` и `postgres/username`, иначе `SPRING_DATASOURCE_URL` / `SPRING_DATASOURCE_USERNAME`, иначе поля в yaml. Пароль: Vault-секрет `loadtest/postgres`, поле `password` (запасной путь `loadtest/postgres/password`), локально `SPRING_DATASOURCE_PASSWORD` (в compose — `loadtest`).
 
 Первый вход: логин `admin`, пароль — из `LOADTEST_BOOTSTRAP_ADMIN_PASSWORD` или
 сгенерированный (смотри лог constructor: `Сгенерирован пароль bootstrap-админа`).
@@ -224,8 +228,9 @@ loadtest-portal/
 ├── gatling-generator/ # Scenario → Gatling (Maven-проект в zip)
 ├── analysis/          # Метрики прогона → аномалии и гипотезы (каталоги правил в YAML)
 ├── config/
-│   ├── consul-vault-config.yaml        # эталон ConfigMap (k8s)
-│   └── consul-vault-config.local.yaml  # docker compose
+│   ├── consul-vault-config.yaml        # адреса модулей (k8s)
+│   ├── consul-vault-config.local.yaml  # docker compose
+│   └── platform.properties             # Consul/Vault ConfigMap (k8s)
 ├── docs/
 └── docker-compose.yml
 ```

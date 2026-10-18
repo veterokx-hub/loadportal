@@ -1,5 +1,6 @@
 package com.loadtest.jmeterbuilder.web;
 
+import com.loadtest.jmeterbuilder.jmx.CsvFiles;
 import com.loadtest.jmeterbuilder.jmx.JmxBuilder;
 import com.loadtest.jmeterbuilder.metrics.BuilderMetrics;
 import com.loadtest.jmeterbuilder.model.Dataset;
@@ -79,7 +80,7 @@ public class GenerateController {
                 String entry = zipEntryName(ds.fileName());
                 if (entry == null) continue;
                 zos.putNextEntry(new ZipEntry(entry));
-                zos.write(toCsv(ds).getBytes(StandardCharsets.UTF_8));
+                zos.write(CsvFiles.render(ds).getBytes(StandardCharsets.UTF_8));
                 zos.closeEntry();
             }
             zos.finish();
@@ -87,32 +88,6 @@ public class GenerateController {
         } catch (Exception e) {
             throw new IllegalStateException("Не удалось собрать ZIP: " + e.getMessage(), e);
         }
-    }
-
-    /**
-     * CSV с заголовком: первая строка — имена колонок (variableNames), далее данные.
-     * Согласовано с ignoreFirstLine=true в CSV Data Set / Random CSV.
-     */
-    private String toCsv(Dataset ds) {
-        StringBuilder sb = new StringBuilder();
-        List<String> columns = ds.columns();
-        if (!columns.isEmpty()) {
-            sb.append(String.join(",", columns.stream().map(this::escapeCsv).toList()));
-            sb.append("\n");
-        }
-        for (List<String> row : ds.rows()) {
-            sb.append(String.join(",", row.stream().map(this::escapeCsv).toList()));
-            sb.append("\n");
-        }
-        return sb.toString();
-    }
-
-    private String escapeCsv(String v) {
-        if (v == null) return "";
-        if (v.contains(",") || v.contains("\"") || v.contains("\n")) {
-            return "\"" + v.replace("\"", "\"\"") + "\"";
-        }
-        return v;
     }
 
     private static String zipEntryName(String fileName) {

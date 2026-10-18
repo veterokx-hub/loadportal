@@ -40,8 +40,8 @@ export function AnalysisList({
     <section>
       <div className="row analysis-list-head">
         <span className="hint" style={{ flex: 1 }}>
-          Отчёты хранятся целиком: правила меняются, но старый отчёт остаётся тем, каким его
-          прочитали. Версия правил показана в карточке.
+          Отчёт сохраняется как есть: новые версии правил его не пересчитывают. Версия правил —
+          внизу отчёта.
         </span>
         <button className="ghost small" type="button" onClick={load} disabled={loading}>
           {loading ? "…" : "Обновить"}
@@ -50,7 +50,7 @@ export function AnalysisList({
 
       {error && <div className="error">{error}</div>}
       {rows.length === 0 && !loading && (
-        <div className="hint">Отчётов пока нет — соберите первый на вкладке «Что анализируем».</div>
+        <div className="hint">Отчётов пока нет — запустите анализ на вкладке «Новый анализ».</div>
       )}
 
       {rows.length > 0 && (

@@ -106,7 +106,7 @@ export function NewAnalysisForm({
       const found = hint.matched.length;
       setLinkNote(
         found === 0
-          ? "Из ссылки ничего не вытащить — в ней нет переменных дашборда. Заполните поля ниже."
+          ? "В ссылке нет переменных цели — заполните поля ниже."
           : `Из ссылки взято: ${hint.matched.join(", ")}${
               hint.unmatched.length > 0 ? `. Осталось ввести: ${hint.unmatched.join(", ")}` : ""
             }`,
@@ -155,23 +155,23 @@ export function NewAnalysisForm({
   return (
     <section className="analysis-form">
       <p className="hint report-lead">
-        Модуль сам читает метрики сервиса за время теста, размечает фазы нагрузки и ищет
-        отклонения — не «где график вырос», а где поведение разошлось с нормой этого же
-        прогона. На выходе — гипотеза, куда смотреть в коде.
+        Модуль читает метрики сервиса за время теста, размечает фазы нагрузки и ищет отклонения
+        от нормы этого же прогона. На выходе — вердикт и гипотезы, куда смотреть в коде.
       </p>
 
       <h3>Откуда взять цель и окно</h3>
       <div className="inline analysis-modes">
         {(
           [
-            { id: "run" as const, label: "Из прогона портала", hint: "Цель и время берутся из карточки прогона" },
+            { id: "run" as const, label: "Из прогона портала", hint: "Цель и период — из карточки прогона" },
             { id: "link" as const, label: "Из ссылки на дашборд", hint: "Вставьте URL Grafana — переменные разберутся сами" },
-            { id: "manual" as const, label: "Ввести руками", hint: "Кластер, namespace, сервис и период" },
+            { id: "manual" as const, label: "Вручную", hint: "Кластер, namespace, сервис и период" },
           ]
         ).map((m) => (
           <button
             type="button"
             key={m.id}
+            aria-pressed={mode === m.id}
             className={`pill-source ${mode === m.id ? "active" : ""}`}
             onClick={() => setMode(m.id)}
             title={m.hint}
@@ -194,7 +194,7 @@ export function NewAnalysisForm({
           </select>
           {runs.length === 0 && (
             <div className="hint">
-              Прогонов пока нет. Запустите тест в модуле «Запуск» или введите цель руками.
+              Прогонов пока нет. Запустите тест в модуле «Запуск» или введите цель вручную.
             </div>
           )}
           {selectedRun && !selectedRun.target_service && (
@@ -220,8 +220,8 @@ export function NewAnalysisForm({
             </button>
           </div>
           <div className="hint">
-            Портал по ссылке не ходит — только читает переменные из адреса: cluster, namespace,
-            service, container и период.
+            Портал не открывает ссылку, а только читает из адреса cluster, namespace, service,
+            container и период.
           </div>
           {linkNote && <div className="hint analysis-link-note">{linkNote}</div>}
         </div>
@@ -289,14 +289,15 @@ export function NewAnalysisForm({
 
       <h3>Контекст теста</h3>
       <p className="hint analysis-kind-lead">
-        Тип теста меняет логику: на плато ищется дрейф, в поиске максимума — точка перелома.
-        SLO подставляются в правила порогов; пусто — берутся значения из каталога.
+        Тип теста задаёт разметку фаз, а в поиске максимума — ещё и поиск точки перелома.
+        Без SLO ошибок берётся порог из каталога, без SLO p99 порог по p99 не проверяется.
       </p>
       <div className="inline analysis-kinds">
         {(Object.keys(TEST_KIND_META) as TestKind[]).map((kind) => (
           <button
             type="button"
             key={kind}
+            aria-pressed={testKind === kind}
             className={`pill-source pill-engine ${testKind === kind ? "active" : ""}`}
             onClick={() => setTestKind(kind)}
           >
@@ -311,7 +312,7 @@ export function NewAnalysisForm({
           <input
             value={sloP99}
             onChange={(e) => setSloP99(e.target.value.replace(/[^\d.]/g, ""))}
-            placeholder="например 500"
+            placeholder="например, 500"
             inputMode="decimal"
           />
         </div>
@@ -320,7 +321,7 @@ export function NewAnalysisForm({
           <input
             value={sloErrors}
             onChange={(e) => setSloErrors(e.target.value.replace(/[^\d.]/g, ""))}
-            placeholder="например 0.5"
+            placeholder="например, 0.5"
             inputMode="decimal"
           />
         </div>
@@ -333,8 +334,7 @@ export function NewAnalysisForm({
             <strong>Показать на демо-данных</strong>
             <span className="muted">
               {" "}
-              — синтетический прогон с заранее заложенным дефектом. Кластер и метрики не нужны:
-              удобно понять, что модуль вообще выдаёт.
+              — синтетический прогон с заложенным дефектом. Кластер и метрики не нужны.
             </span>
           </span>
         </label>
@@ -344,6 +344,7 @@ export function NewAnalysisForm({
               <button
                 type="button"
                 key={f.id}
+                aria-pressed={demoFault === f.id}
                 className={`pill-source ${demoFault === f.id ? "active" : ""}`}
                 onClick={() => setDemoFault(f.id)}
                 title={f.hint}
@@ -362,7 +363,7 @@ export function NewAnalysisForm({
           {demo
             ? "Демо-режим: данные синтетические, отчёт помечен."
             : canSubmit
-              ? "Анализ считается в фоне — отчёт откроется, как только будет готов."
+              ? "Анализ идёт в фоне — отчёт откроется, когда будет готов."
               : "Заполните namespace и сервис или включите демо-режим."}
         </span>
         <button type="button" className="success" onClick={submit} disabled={loading || !canSubmit}>

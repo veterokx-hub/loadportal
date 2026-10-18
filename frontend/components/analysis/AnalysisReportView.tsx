@@ -66,7 +66,7 @@ export function AnalysisReportView({ report }: { report: AnalysisReport }) {
           <div className="capacity">
             <div className="capacity-figure">
               <strong>{Math.round(report.capacity.max_sustained_rps)}</strong>
-              <span>rps держит стабильно</span>
+              <span>RPS держит стабильно</span>
             </div>
             <div className="capacity-body">
               <p>{report.capacity.reason}</p>
@@ -74,7 +74,7 @@ export function AnalysisReportView({ report }: { report: AnalysisReport }) {
                 <p className="muted">
                   Первым упёрлось: <strong>{report.capacity.first_limiter_title}</strong>
                   {report.capacity.knee_rps > 0 &&
-                    ` — перелом около ${Math.round(report.capacity.knee_rps)} rps`}
+                    ` — перелом около ${Math.round(report.capacity.knee_rps)} RPS`}
                 </p>
               )}
             </div>
@@ -86,8 +86,8 @@ export function AnalysisReportView({ report }: { report: AnalysisReport }) {
         <section className="report-block">
           <h3>Гипотезы: что, вероятно, происходит</h3>
           <p className="hint report-lead">
-            Модуль сопоставил форму метрик с известными паттернами отказов. Это подсказка,
-            куда смотреть первым делом, — не готовый диагноз.
+            Форма метрик сопоставлена с известными паттернами отказов. Это подсказка, куда
+            смотреть первым делом, а не диагноз.
           </p>
           <div className="hyp-list">
             {report.hypotheses.map((h, i) => (
@@ -105,7 +105,7 @@ export function AnalysisReportView({ report }: { report: AnalysisReport }) {
 
       {report.correlations.length > 0 && (
         <section className="report-block">
-          <h3>Что за чем потянулось</h3>
+          <h3>Причины и следствия</h3>
           <div className="chain-list">
             {report.correlations.map((c) => (
               <CorrelationChain
@@ -126,6 +126,7 @@ export function AnalysisReportView({ report }: { report: AnalysisReport }) {
             <div className="finding-filters">
               <button
                 type="button"
+                aria-pressed={severityFilter === ""}
                 className={`pill-source ${severityFilter === "" ? "active" : ""}`}
                 onClick={() => setSeverityFilter("")}
               >
@@ -136,6 +137,7 @@ export function AnalysisReportView({ report }: { report: AnalysisReport }) {
                   <button
                     type="button"
                     key={level}
+                    aria-pressed={severityFilter === level}
                     className={`pill-source ${severityFilter === level ? "active" : ""}`}
                     onClick={() => setSeverityFilter(level)}
                   >
@@ -155,9 +157,8 @@ export function AnalysisReportView({ report }: { report: AnalysisReport }) {
             <div>
               <strong>Отклонений не нашлось.</strong>
               <p className="muted">
-                Все метрики держались в пределах своей же нормы, устойчивых трендов на плато нет,
-                пороги не нарушались. Проверьте блок покрытия ниже: вывод стоит ровно столько,
-                сколько метрик удалось прочитать.
+                Метрики держались в своей норме, трендов и нарушений порогов нет. Проверьте
+                покрытие ниже: вывод надёжен настолько, насколько полны метрики.
               </p>
             </div>
           </div>

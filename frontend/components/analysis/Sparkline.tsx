@@ -129,12 +129,12 @@ export function Sparkline({
       <div className="spark-scale">
         <span title="Минимум на графике">{formatValue(lo, spark.unit)}</span>
         {baseline !== null && (
-          <span className="spark-legend" title="Медиана до отклонения">
+          <span className="spark-legend" title="Опорный уровень: медиана фазы или начало тренда">
             база {formatValue(baseline, spark.unit)}
           </span>
         )}
         {limit !== null && (
-          <span className="spark-legend spark-legend-limit" title="Порог правила или лимит контейнера">
+          <span className="spark-legend spark-legend-limit" title="Порог правила или SLO">
             порог {formatValue(limit, spark.unit)}
           </span>
         )}

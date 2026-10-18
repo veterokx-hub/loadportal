@@ -24,7 +24,6 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
     scenario,
     setScenario,
     replaceScenario,
-    isDirty,
     markScenarioSaved,
     maxReached,
     setMaxReached,
@@ -37,7 +36,7 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
 
   function goTo(i: number) {
     if (i > 0 && !scenario) return;
-    if (i > maxReached) return;
+    if (i > maxReached) advanceMax(i);
     router.push(scenarioPath(scenarioSlugByIndex(i)));
   }
 
@@ -54,11 +53,13 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
   }
 
   function onNewScenarioClick() {
-    if (scenario && scenario.requests.length > 0 && isDirty) {
-      setNewScenarioDialog(true);
-    } else {
-      resetToNewScenario();
-    }
+    const partial =
+      !!scenario &&
+      (scenario.requests.length > 0 ||
+        scenario.datasets.length > 0 ||
+        scenario.base_url.trim().length > 0);
+    if (partial) setNewScenarioDialog(true);
+    else resetToNewScenario();
   }
 
   return (
@@ -67,7 +68,9 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
         <SaveScenarioDialog
           scenario={scenario}
           title="Новый сценарий"
-          message={`Текущий сценарий «${scenario.name}» будет очищен. Сохранить текущую сборку перед началом нового сценария?`}
+          message={`Сценарий «${scenario.name}» будет очищен. Сохранить текущую сборку?`}
+          confirmLabel="Да"
+          discardLabel="Нет"
           onCancel={() => setNewScenarioDialog(false)}
           onDone={(saved) => {
             if (saved) markScenarioSaved();
@@ -75,12 +78,6 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
           }}
         />
       )}
-
-      <div className="scenario-toolbar">
-        <button type="button" className="ghost small" onClick={onNewScenarioClick}>
-          + Новый сценарий
-        </button>
-      </div>
 
       <div className="steps-wrap">
         <div className="steps-progress" aria-hidden>
@@ -123,6 +120,7 @@ export function ScenarioWorkspace({ stepSlug }: { stepSlug: ScenarioStepSlug }) 
       {step === 0 && (
         <Step1Source
           currentScenario={scenario}
+          onNewScenario={onNewScenarioClick}
           onAnalyzed={(s) => {
             setScenario(s);
             advance(1);

@@ -14,7 +14,8 @@
  - поиск максимума: нативная лестница incrementUsersPerSec().times().eachLevelLasting()
    без рамп между ступенями — ровные полки, как у Throughput Shaping Timer;
  - throughput — процент итераций виртуального пользователя (как Throughput Controller).
-   100 — каждый проход. Smoke-сценарий процент не применяет: каждый запрос идёт всегда;
+   100 — каждый проход. balance=repeat — repeat(n) на каждом проходе.
+   Smoke-сценарий процент не применяет: каждый запрос идёт всегда. Повторы применяются;
  - корреляция: check(...).withDefault(...).saveAs(...) → EL #{var};
  - валидация: status().is(...) + substring(...).exists() (провал = KO запроса);
  - AutoStop: скользящее окно по ошибкам и среднему отклику + crashLoadGeneratorIf,
@@ -246,6 +247,22 @@ def _clamp_pct(value: int) -> int:
     return max(1, min(100, int(value)))
 
 
+def _repeat_mode(members: list[Request]) -> bool:
+    """Цикл, если в группе от двух запросов и выбран balance=repeat, без явного percent."""
+    if len(members) < 2:
+        return False
+    marked = [r.balance for r in members if r.balance in ("percent", "repeat")]
+    return "repeat" in marked and "percent" not in marked
+
+
+def _repeat_times(req: Request) -> int:
+    try:
+        n = int(req.repeat)
+    except (TypeError, ValueError):
+        return 1
+    return n if n > 0 else 1
+
+
 def _throughput_pct(req: Request, members: list[Request]) -> int:
     """Процент проходов. Группа из одного запроса — всегда 100."""
     if len(members) < 2:
@@ -259,6 +276,9 @@ def _throughput_pct(req: Request, members: list[Request]) -> int:
 
 
 def _samples_per_iteration(members: list[Request]) -> float:
+    if _repeat_mode(members):
+        total = sum(_repeat_times(r) for r in members)
+        return float(total) if total > 0 else 1.0
     total = sum(_throughput_pct(r, members) / 100 for r in members)
     return total if total > 0 else 1.0
 
@@ -477,14 +497,20 @@ def _emit_scenario(key: str, members: list[Request], ds_ids: list[str],
             continue
         L.append(f"        .feed(FEEDER_{_java_id(dsid).upper()})")
 
+    looping = _repeat_mode(members)
     for idx, req in enumerate(members):
         pct = _throughput_pct(req, members)
         name = names.get(req.id) or req.name
-        if apply_throughput and pct < 100:
+        times = _repeat_times(req) if looping else 1
+        if apply_throughput and not looping and pct < 100:
             L.append(f"        .exec(session -> throughput(session, {_java(req.id)}, {pct}))")
             L.append(
                 f"        .doIf(session -> session.getBoolean({_java(req.id + '_run')})).then("
             )
+            L.extend(_emit_request(req, autostop, "            ", name))
+            L.append("        )")
+        elif times > 1:
+            L.append(f"        .repeat({times}).on(")
             L.extend(_emit_request(req, autostop, "            ", name))
             L.append("        )")
         else:

@@ -34,6 +34,7 @@ class JmxBuilderTest {
                 new Validation(true, 200, "\"token\""),
                 "ds1",
                 1,
+                null,
                 null
         );
         // profile коррелирует с login (использует ${authToken}) -> та же группа
@@ -54,7 +55,8 @@ class JmxBuilderTest {
                 new Validation(true, 200, ""),
                 null,
                 1,
-                50
+                50,
+                null
         );
         // независимый запрос -> отдельная группа
         Request search = new Request(
@@ -64,6 +66,7 @@ class JmxBuilderTest {
                 new Validation(true, 200, ""),
                 null,
                 1,
+                null,
                 null
         );
 
@@ -124,6 +127,38 @@ class JmxBuilderTest {
     }
 
     @Test
+    void repeatBalanceUsesLoopController() {
+        Request login = new Request(
+                "login", 1, "POST /login", "POST", "/login", null,
+                List.of(), List.of(), Body.none(), List.of(), List.of(),
+                new Intensity(12.0, 0, 30),
+                Validation.defaults(),
+                "ds",
+                1,
+                20,
+                "repeat"
+        );
+        Request order = new Request(
+                "order", 2, "GET /order", "GET", "/order", null,
+                List.of(), List.of(), Body.none(), List.of(), List.of(),
+                new Intensity(12.0, 0, 30),
+                Validation.defaults(),
+                "ds",
+                5,
+                null,
+                "repeat"
+        );
+        Scenario s = new Scenario("loops", SourceType.OPENAPI, "https://api.example.com",
+                LoadConfig.defaults(), List.of(), List.of(login, order), AutoStop.disabled(),
+                PrometheusConfig.defaults());
+        String jmx = builder.build(s);
+        assertEquals(1, countOccurrences(jmx, "<LoopController "));
+        assertTrue(jmx.contains("LoopController.loops\">5</stringProp>"));
+        assertFalse(jmx.contains("<ThroughputController "));
+        assertFalse(jmx.contains("<IfController "));
+    }
+
+    @Test
     void maxSearchProducesStaircase() {
         String jmx = builder.build(sampleScenario(TestMode.MAX_SEARCH));
         // 4 ступени на группу
@@ -142,6 +177,7 @@ class JmxBuilderTest {
                 Validation.defaults(),
                 null,
                 1,
+                null,
                 null
         );
         Scenario s = new Scenario("q-test", SourceType.OPENAPI, "https://api.example.com",
@@ -162,7 +198,7 @@ class JmxBuilderTest {
         Request req = new Request(
                 "q", 1, "GET list", "GET", "/items", null,
                 List.of(), List.of(), Body.none(), List.of(), List.of(),
-                new Intensity(1.0, 1, 1), Validation.defaults(), null, 1, null);
+                new Intensity(1.0, 1, 1), Validation.defaults(), null, 1, null, null);
         Scenario s = new Scenario("checkout", SourceType.OPENAPI, "https://api.example.com",
                 LoadConfig.defaults(), List.of(), List.of(req), AutoStop.disabled(), metrics);
         String jmx = builder.build(s);

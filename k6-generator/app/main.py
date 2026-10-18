@@ -51,6 +51,12 @@ def generate_k6_endpoint(scenario: ScenarioDraft, request: Request) -> Response:
     started = time.perf_counter()
     try:
         result = generate_k6(scenario)
+    except ValueError as exc:
+        GENERATE_TOTAL.labels(format="unknown", result="failure").inc()
+        GENERATE_DURATION.labels(format="unknown", result="failure").observe(
+            time.perf_counter() - started
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         GENERATE_TOTAL.labels(format="unknown", result="failure").inc()
         GENERATE_DURATION.labels(format="unknown", result="failure").observe(
@@ -61,6 +67,7 @@ def generate_k6_endpoint(scenario: ScenarioDraft, request: Request) -> Response:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("script.js", result.script)
+        zf.writestr("vm.json", result.vm_json)
         for f in result.data_files:
             zf.writestr(_zip_entry(f.name), f.content)
     body = buf.getvalue()

@@ -21,9 +21,10 @@ public record Request(
         Validation validation,
         String datasetId,
         int repeat,
-        Integer throughput
+        Integer throughput,
+        String balance
 ) {
-    /** Устаревшее число повторов. Новые сборки присылают throughput и repeat=1. */
+    /** Число повторов за итерацию, когда balance равен "repeat". */
     public int repeatOrOne() {
         return repeat > 0 ? repeat : 1;
     }

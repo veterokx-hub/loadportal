@@ -694,6 +694,58 @@ a:hover {
   font-size: 12.5px;
 }
 
+.group-mix {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.balance-pills {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0;
+  vertical-align: middle;
+}
+
+button.balance-pill {
+  min-height: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+  color: var(--muted);
+  background: transparent;
+  background-image: none;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 999px;
+  box-shadow: none;
+  will-change: auto;
+}
+
+button.balance-pill:hover:not(:disabled),
+button.balance-pill:active:not(:disabled) {
+  transform: none;
+  filter: none;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  background-position: 0 0;
+  box-shadow: none;
+}
+
+button.balance-pill.active,
+button.balance-pill.active:hover:not(:disabled) {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: none;
+}
+
+button.balance-pill:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
 .form-details {
   margin: 4px 0 10px;
   font-size: 12px;

@@ -50,7 +50,7 @@ export function analysisNewPath(runId?: string | null): string {
 }
 
 export const ANALYSIS_TABS = [
-  { id: "new" as const, label: "Что анализируем", href: "/analysis/new", num: 1 },
+  { id: "new" as const, label: "Новый анализ", href: "/analysis/new", num: 1 },
   { id: "list" as const, label: "Отчёты", href: "/analysis/list", num: 2 },
 ];
 

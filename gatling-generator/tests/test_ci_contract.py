@@ -168,6 +168,41 @@ def test_max_search_scales_both_rates():
             assert "LOAD_FACTOR" not in line
 
 
+def test_repeat_balance_uses_repeat_on():
+    scenario = ScenarioDraft(
+        name="loops",
+        source_type=SourceType.OPENAPI,
+        base_url="https://sut.example",
+        requests=[
+            Request(
+                id="a",
+                order=1,
+                name="login",
+                method="POST",
+                path="/login",
+                dataset_id="ds",
+                repeat=1,
+                throughput=20,
+                balance="repeat",
+            ),
+            Request(
+                id="b",
+                order=2,
+                name="order",
+                method="GET",
+                path="/order",
+                dataset_id="ds",
+                repeat=5,
+                balance="repeat",
+            ),
+        ],
+    )
+    java = _simulation(scenario)
+    assert java.count(".repeat(5).on(") == 2
+    assert ".repeat(1)" not in java
+    assert "throughput(session" not in java
+
+
 @pytest.mark.skipif(shutil.which("mvn") is None, reason="maven не установлен")
 def test_maven_test_compile():
     result = generate_gatling(_scenario())

@@ -120,7 +120,25 @@ public final class ScenarioGrouping {
         }
         addVars(vars, req.path());
         addVars(vars, req.url());
+        vars.removeIf(name -> suppliedHere(req, name));
         return vars;
+    }
+
+    /** Константа, генератор или CSV с этим именем уже задают ${name} в том же запросе. */
+    private static boolean suppliedHere(Request req, String name) {
+        for (Param p : req.params()) {
+            if (p.name() == null || !p.name().trim().equals(name) || p.source() == null) continue;
+            ParamSource src = p.source();
+            if (src instanceof ParamSource.Correlation) continue;
+            if (src instanceof ParamSource.Constant c) {
+                return c.value() != null && !c.value().isBlank();
+            }
+            if (src instanceof ParamSource.Csv c) {
+                return c.column() != null && !c.column().isBlank();
+            }
+            return src instanceof ParamSource.GeneratorRef;
+        }
+        return false;
     }
 
     private static void addVars(Set<String> vars, String text) {

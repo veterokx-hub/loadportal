@@ -15,6 +15,8 @@ import type {
 import { ParamSourceEditor } from "@/components/ParamSourceEditor";
 import { DatasetsEditor } from "@/components/DatasetsEditor";
 import { NumberField } from "@/components/NumberField";
+import { healthMark, revealHealth, useHealthFocus } from "@/lib/health-focus";
+import { tidyPasted } from "@/lib/paste";
 import {
   PARAM_LOCATION_LABEL,
   bracesInAddress,
@@ -23,6 +25,13 @@ import {
   uiParams,
   urlTemplate,
 } from "@/lib/request-params";
+import {
+  gatlingScriptName,
+  keepLettersDigits,
+  paramScriptKind,
+  scriptVarClashes,
+  scriptWriters,
+} from "@/lib/script-vars";
 
 /** Вкладки, куда можно добавлять параметры вручную. */
 const ADDABLE_TABS: ParamLocation[] = ["header", "query", "body"];
@@ -43,7 +52,7 @@ function validationCustom(v: Validation): boolean {
 }
 
 function validationSummary(v: Validation): string {
-  if (!v.check_response_code && !(v.response_contains ?? "").trim()) return "выкл";
+  if (!v.check_response_code && !(v.response_contains ?? "").trim()) return "выключена";
   const bits: string[] = [];
   if (v.check_response_code) bits.push(`код ${v.expected_status}`);
   const contains = (v.response_contains ?? "").trim();
@@ -95,19 +104,22 @@ function bodyModeFor(content: string, prev?: RequestModel["body"]): RequestModel
   return { mode: "raw", content_type: prev?.content_type ?? null, content };
 }
 
-function PathHighlight({ path }: { path: string }) {
+function PathHighlight({ path, open }: { path: string; open: Set<string> }) {
   const parts = path.split(/(\{[a-zA-Z0-9_]+\})/g);
   return (
     <code className="req-path">
-      {parts.map((part, i) =>
-        part.startsWith("{") && part.endsWith("}") ? (
-          <span key={i} className="req-path-param">
+      {parts.map((part, i) => {
+        if (!(part.startsWith("{") && part.endsWith("}"))) {
+          return <span key={i}>{part}</span>;
+        }
+        const name = part.slice(1, -1);
+        const pending = open.has(name);
+        return (
+          <span key={i} className={`req-path-param ${pending ? "is-open" : "is-bound"}`}>
             {part}
           </span>
-        ) : (
-          <span key={i}>{part}</span>
-        )
-      )}
+        );
+      })}
     </code>
   );
 }
@@ -116,11 +128,17 @@ function RequestParamsEditor({
   req,
   available,
   columns,
+  clashNames,
+  focusTab,
+  focusToken,
   updateRequest,
 }: {
   req: RequestModel;
   available: string[];
   columns: string[];
+  clashNames: Set<string>;
+  focusTab?: ParamLocation;
+  focusToken?: number;
   updateRequest: (id: string, patch: Partial<RequestModel>) => void;
 }) {
   const pathNames = useMemo(() => bracesInAddress(req), [req]);
@@ -156,6 +174,10 @@ function RequestParamsEditor({
     }
     return "header";
   });
+
+  useEffect(() => {
+    if (focusTab) setTab(focusTab);
+  }, [focusToken, focusTab]);
 
   // Если Path исчез (убрали {…} на шаге 2) — уйти с вкладки path.
   useEffect(() => {
@@ -198,6 +220,7 @@ function RequestParamsEditor({
   const reqRef = useRef(req);
   reqRef.current = req;
   const bodyTimer = useRef<number>(0);
+  const [pasteNote, setPasteNote] = useState<string | null>(null);
 
   function setBodyContent(content: string, immediate = false) {
     updateRequest(req.id, { body: bodyModeFor(content, req.body) });
@@ -219,9 +242,9 @@ function RequestParamsEditor({
       location === "header" ? "Header" : location === "query" ? "param" : "field";
     let n = 1;
     let name = base;
-    while (req.params.some((p) => p.location === location && p.name === name)) {
+    while (req.params.some((p) => p.name.trim() === name)) {
       n += 1;
-      name = `${base}_${n}`;
+      name = `${base}${n}`;
     }
     const param: Param = {
       name,
@@ -263,11 +286,11 @@ function RequestParamsEditor({
       <div className="param-toolbar">
         <p className="hint">
           {tab === "path"
-            ? "Path из шага «Запросы» ({…} в URL). Здесь только настройка значения — добавить или удалить нельзя."
+            ? "Берутся из {…} в адресе на шаге «Запросы». Здесь задаётся только значение."
             : tab === "header"
               ? "Заголовки запроса (Authorization, Content-Type…)."
               : tab === "query"
-                ? "Query-параметры → ?key=value в URL."
+                ? "Добавляются в URL как ?key=value."
                 : "Поля тела (JSON / form)."}
         </p>
         {canAdd && (
@@ -278,18 +301,31 @@ function RequestParamsEditor({
       </div>
 
       {tab === "body" && (
-        <div className="field">
+        <div className="field" data-health={healthMark("body", req.id)}>
           <label>Тело запроса (Body)</label>
           <textarea
             style={{ fontFamily: "var(--font-mono)", fontSize: 12.5, minHeight: 96 }}
             placeholder={'{"login": "{username}", "password": "{password}"}'}
             value={req.body?.content ?? ""}
-            onChange={(e) => setBodyContent(e.target.value)}
-            onBlur={(e) => setBodyContent(e.target.value, true)}
+            onChange={(e) => {
+              setPasteNote(null);
+              setBodyContent(e.target.value);
+            }}
+            onBlur={(e) => {
+              const tidied = tidyPasted(e.target.value);
+              if (tidied.changed) {
+                setPasteNote(
+                  tidied.formatted
+                    ? "Скрытые символы убраны, тело приведено к JSON."
+                    : "Скрытые символы убраны."
+                );
+              }
+              setBodyContent(tidied.text, true);
+            }}
           />
           <div className="hint">
-            Фрагменты в <code>{"{...}"}</code> появятся ниже как параметры Body — их источник
-            настраивается так же, как у остальных параметров.
+            Каждый <code>{"{…}"}</code> станет параметром Body в таблице ниже.
+            {pasteNote && <> {pasteNote}</>}
           </div>
         </div>
       )}
@@ -297,7 +333,7 @@ function RequestParamsEditor({
       {rows.length === 0 ? (
         <div className="param-empty">
           {tab === "path" ? (
-            <span>В пути нет параметризованных частей {"{…}"}.</span>
+            <span>В адресе нет параметров {"{…}"}.</span>
           ) : (
             <>
               <span>Нет параметров «{PARAM_LOCATION_LABEL[tab]}».</span>
@@ -315,28 +351,44 @@ function RequestParamsEditor({
             <span />
           </div>
           {rows.map(({ p, idx }) => {
+            const scriptKind = paramScriptKind(p);
+            const scriptName = p.name.trim();
+            const nameClash = !!scriptKind && clashNames.has(scriptName);
+            const gatlingName = scriptKind ? gatlingScriptName(scriptName) : scriptName;
+            const nameDrift = !!scriptKind && scriptName !== "" && gatlingName !== scriptName;
             const invalid = p.required && sourceEmpty(p.source);
             const isPath = p.location === "path";
             return (
               <div
                 key={`${req.id}-param-${idx}`}
                 className={`param-row ${invalid ? "invalid" : ""}`}
+                data-health={healthMark("param", req.id, p.location, p.name.trim())}
               >
                 <div className="param-name-cell">
                   {isPath ? (
-                    <code className="param-path-name">{"{" + p.name + "}"}</code>
+                    <code className={`param-path-name${scriptKind ? " script-var" : ""}`}>
+                      {"{" + p.name + "}"}
+                    </code>
                   ) : (
                     <input
+                      className={scriptKind ? "script-var" : undefined}
                       placeholder="имя"
+                      title={scriptKind ? "Имя попадёт в скрипт" : undefined}
                       value={p.name}
-                      onChange={(ev) => patchParam(idx, { name: ev.target.value })}
+                      onChange={(ev) =>
+                        patchParam(idx, {
+                          name: scriptKind ? keepLettersDigits(ev.target.value) : ev.target.value,
+                        })
+                      }
                     />
                   )}
-                  {(isPath || (p.required && sourceEmpty(p.source)) || p.schema_type) && (
+                  {(isPath || invalid || p.schema_type || nameClash || nameDrift) && (
                     <div className="param-name-meta">
                       {isPath && <span>из URL</span>}
-                      {p.required && sourceEmpty(p.source) && (
-                        <span className="param-req">обязательный</span>
+                      {invalid && <span className="param-req">обязательный</span>}
+                      {nameClash && <span className="param-warn">имя переменной занято</span>}
+                      {nameDrift && (
+                        <span className="param-warn">в Gatling станет «{gatlingName}»</span>
                       )}
                       {p.schema_type && <span>: {p.schema_type}</span>}
                     </div>
@@ -386,6 +438,7 @@ export function Step3Correlation({
   onNext: () => void;
 }) {
   const ordered = [...scenario.requests].sort((a, b) => a.order - b.order);
+  const health = useHealthFocus();
   const [openIds, setOpenIds] = useState<Set<string>>(
     () => new Set(ordered[0]?.id ? [ordered[0].id] : [])
   );
@@ -413,6 +466,21 @@ export function Step3Correlation({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- однократно при монтировании
   }, []);
 
+  useEffect(() => {
+    if (!health || health.step !== 2) return;
+    if (health.requestId) {
+      setOpenIds((prev) => {
+        if (prev.has(health.requestId!)) return prev;
+        const next = new Set(prev);
+        next.add(health.requestId!);
+        return next;
+      });
+      if (health.place === "extract") setFoldOpen(health.requestId, "extract", true);
+    }
+    const timer = window.setTimeout(() => revealHealth(health), 200);
+    return () => window.clearTimeout(timer);
+  }, [health]);
+
   function toggleOpen(id: string) {
     setOpenIds((prev) => {
       const next = new Set(prev);
@@ -428,6 +496,12 @@ export function Step3Correlation({
 
   const invalidRequests = ordered.filter((r) => missingRequired(r).length > 0);
   const canProceed = invalidRequests.length === 0;
+
+  const clashNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const c of scriptVarClashes(scriptWriters(scenario))) names.add(c.name);
+    return names;
+  }, [scenario]);
 
   function varsBefore(order: number): string[] {
     return ordered
@@ -450,8 +524,15 @@ export function Step3Correlation({
   }
 
   function addExtraction(req: RequestModel) {
+    const taken = new Set(scriptWriters(scenario).map((w) => w.name));
+    let n = req.extractions.length + 1;
+    let variable = `var${n}`;
+    while (taken.has(variable)) {
+      n += 1;
+      variable = `var${n}`;
+    }
     const ext: Extraction = {
-      variable: `var_${req.extractions.length + 1}`,
+      variable,
       type: "json",
       expression: "$.id",
       match_no: 1,
@@ -480,11 +561,15 @@ export function Step3Correlation({
     <div className="panel">
       <h2>3. Корреляция и параметры</h2>
       <p className="muted" style={{ marginTop: -8 }}>
-        Задайте, как заполняются параметры: константа, генератор, CSV или значение из ответа
-        предыдущего запроса. Path берётся из URL шага «Запросы» и только настраивается.
+        Выберите источник каждого параметра: константа, генератор, CSV или корреляция — значение
+        из ответа предыдущего запроса.
       </p>
 
-      <DatasetsEditor datasets={scenario.datasets} onChange={setDatasets} />
+      <DatasetsEditor
+        datasets={scenario.datasets}
+        onChange={setDatasets}
+        clashNames={clashNames}
+      />
 
       {ordered.map((req) => {
         const available = varsBefore(req.order);
@@ -493,6 +578,7 @@ export function Step3Correlation({
         const visible = uiParams(req);
         const missing = missingRequired(req).length;
         const path = urlTemplate(req) || "/";
+        const openParams = new Set(missingRequired(req).map((p) => p.name));
         return (
           <div className="request-card" key={req.id}>
             <div
@@ -502,7 +588,7 @@ export function Step3Correlation({
             >
               <span className={`method ${req.method}`}>{req.method}</span>
               <div className="req-head-title">
-                <PathHighlight path={path} />
+                <PathHighlight path={path} open={openParams} />
                 {req.name && req.name !== path && req.name !== `${req.method} ${path}` && (
                   <span className="req-head-name">{req.name}</span>
                 )}
@@ -514,14 +600,18 @@ export function Step3Correlation({
                 </span>
               )}
               <span className="tag">{visible.length} парам.</span>
-              <span className="tag">{req.extractions.length} экстр.</span>
+              <span className="tag">{req.extractions.length} извл.</span>
               <span className="muted">{isOpen ? "▲" : "▼"}</span>
             </div>
 
             {isOpen && (
               <div className="body">
-                <div className="field" style={{ marginBottom: 8 }}>
-                  <label>Датасет запроса (общий CSV)</label>
+                <div
+                  className="field"
+                  style={{ marginBottom: 8 }}
+                  data-health={healthMark("dataset", req.id)}
+                >
+                  <label>Датасет (CSV)</label>
                   <select
                     style={{ maxWidth: 360 }}
                     value={req.dataset_id ?? ""}
@@ -529,7 +619,7 @@ export function Step3Correlation({
                       updateRequest(req.id, { dataset_id: e.target.value || null })
                     }
                   >
-                    <option value="">— не используется —</option>
+                    <option value="">— без датасета —</option>
                     {scenario.datasets.map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.name} ({d.columns.join(", ")})
@@ -542,6 +632,17 @@ export function Step3Correlation({
                   req={req}
                   available={available}
                   columns={columns}
+                  clashNames={clashNames}
+                  focusTab={
+                    health?.step === 2 && health.requestId === req.id
+                      ? health.place === "body"
+                        ? "body"
+                        : health.place === "param"
+                          ? health.location
+                          : undefined
+                      : undefined
+                  }
+                  focusToken={health?.token}
                   updateRequest={updateRequest}
                 />
 
@@ -558,6 +659,7 @@ export function Step3Correlation({
                   </div>
                 )}
 
+                <div data-health={healthMark("extract", req.id)}>
                 <FoldSection
                   title="Извлечь из ответа"
                   summary={
@@ -583,23 +685,49 @@ export function Step3Correlation({
                         <span>Выражение</span>
                         <span />
                       </div>
-                      {req.extractions.map((e, idx) => (
-                        <div key={idx} className="param-row">
-                          <input
-                            style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}
-                            placeholder="переменная"
-                            value={e.variable}
-                            onChange={(ev) =>
-                              patchExtraction(req, idx, { variable: ev.target.value })
-                            }
-                          />
+                      {req.extractions.map((e, idx) => {
+                        const variable = e.variable.trim();
+                        const taken = clashNames.has(variable);
+                        const gatlingName = gatlingScriptName(variable);
+                        const drift = variable !== "" && gatlingName !== variable;
+                        return (
+                        <div
+                          key={idx}
+                          className="param-row"
+                          data-health={healthMark("extract", req.id, "", e.variable.trim())}
+                        >
+                          <div className="param-name-cell">
+                            <input
+                              className="script-var"
+                              style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}
+                              placeholder="переменная"
+                              title="Имя попадёт в скрипт"
+                              value={e.variable}
+                              onChange={(ev) =>
+                                patchExtraction(req, idx, {
+                                  variable: keepLettersDigits(ev.target.value),
+                                })
+                              }
+                            />
+                            {(taken || drift) && (
+                              <div className="param-name-meta">
+                                {taken && <span className="param-warn">имя переменной занято</span>}
+                                {drift && (
+                                  <span className="param-warn">в Gatling станет «{gatlingName}»</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
                           <select
                             value={e.type}
-                            onChange={(ev) =>
+                            onChange={(ev) => {
+                              const type = ev.target.value as ExtractionType;
                               patchExtraction(req, idx, {
-                                type: ev.target.value as ExtractionType,
-                              })
-                            }
+                                type,
+                                expression:
+                                  e.expression === "$.id" && type !== "json" ? "" : e.expression,
+                              });
+                            }}
                           >
                             <option value="json">JSONPath</option>
                             <option value="regex">Regex</option>
@@ -628,7 +756,8 @@ export function Step3Correlation({
                             ✕
                           </button>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
 
@@ -641,6 +770,7 @@ export function Step3Correlation({
                     </div>
                   )}
                 </FoldSection>
+                </div>
 
                 <FoldSection
                   title="Валидация ответа"
@@ -673,7 +803,7 @@ export function Step3Correlation({
                       />
                     </div>
                     <div className="field" style={{ flex: 1, minWidth: 220 }}>
-                      <label>Тело содержит текст (Contains)</label>
+                      <label>Тело ответа содержит</label>
                       <input
                         value={req.validation.response_contains}
                         placeholder='"id"'
@@ -690,13 +820,14 @@ export function Step3Correlation({
         );
       })}
 
-      {!canProceed && (
+      {invalidRequests.length > 0 && (
         <div className="error" style={{ marginTop: 12 }}>
           Заполните обязательные параметры:{" "}
-          {invalidRequests.map((r) => r.name).join(", ")}
+          {invalidRequests
+            .map((r) => `${r.name} (${missingRequired(r).map((p) => p.name).join(", ")})`)
+            .join("; ")}
         </div>
       )}
-
       <div className="footer-nav">
         <button className="ghost" onClick={onBack}>
           ← Назад

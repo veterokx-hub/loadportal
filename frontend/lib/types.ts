@@ -84,10 +84,12 @@ export interface RequestModel {
   intensity: Intensity;
   validation: Validation;
   dataset_id?: string | null;
-  /** Устаревшее: раньше число повторов за итерацию. Генераторы читают throughput. */
+  /** Число выполнений за итерацию, когда группа в режиме повторов. */
   repeat: number;
-  /** Процент итераций группы, в которых запрос выполняется. 100 — каждый проход. */
+  /** Процент итераций группы. 100 — каждый проход. Используется, когда режим не «повторы». */
   throughput?: number;
+  /** Как выравнивать запросы внутри группы. Пусто — процент. */
+  balance?: "percent" | "repeat";
 }
 
 export interface Dataset {

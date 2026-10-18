@@ -6,6 +6,9 @@ type DocsSectionId =
   | "about"
   | "scenario"
   | "engines"
+  | "jmeter"
+  | "k6"
+  | "gatling"
   | "run"
   | "theory"
   | "environment"
@@ -20,6 +23,9 @@ const SECTIONS: {
   { id: "about", label: "О портале", available: true },
   { id: "scenario", label: "Сценарий", available: true },
   { id: "engines", label: "Движки", available: true },
+  { id: "jmeter", label: "JMeter", available: true },
+  { id: "k6", label: "k6", available: true },
+  { id: "gatling", label: "Gatling", available: true },
   { id: "run", label: "Запуск", available: true },
   { id: "theory", label: "Теория НТ", available: true },
   { id: "environment", label: "Стенд", available: false },
@@ -43,9 +49,9 @@ function AboutDocs() {
         <h3>Назначение</h3>
         <p>
           <strong>НТ · Портал</strong> — платформа для подготовки и запуска нагрузочных
-          тестов. Сценарий собирается из OpenAPI/Postman в артефакт{" "}
-          <strong>JMeter</strong>, <strong>k6</strong> или <strong>Gatling</strong>, прогон
-          фиксируется в разделе «Запуск» и связывается с задачей Jira.
+          тестов. Сценарий из OpenAPI или Postman собирается в скрипт{" "}
+          <strong>JMeter</strong>, <strong>k6</strong> или <strong>Gatling</strong>. Прогон
+          запускается в GitLab CI из раздела «Запуск» и привязывается к задаче Jira.
         </p>
       </section>
 
@@ -77,7 +83,7 @@ function AboutDocs() {
               <td>3</td>
               <td>Запуск</td>
               <td>доступен</td>
-              <td>Прогон по сборке/скрипту, Jira, статусы</td>
+              <td>Прогон в GitLab CI по сборке или скрипту, статусы</td>
             </tr>
             <tr>
               <td>4</td>
@@ -94,8 +100,8 @@ function AboutDocs() {
           </tbody>
         </table>
         <p className="hint">
-          URL разделов и шагов — отдельные path. «Назад» в браузере возвращает на предыдущий
-          экран. Настройки и эта справка открываются поверх, без смены адреса.
+          У каждого раздела и шага свой адрес, кнопка «Назад» в браузере работает. Справка и
+          настройки открываются поверх страницы.
         </p>
       </section>
 
@@ -103,22 +109,25 @@ function AboutDocs() {
         <h3>Вход и роли</h3>
         <ul>
           <li>
-            Локальный аккаунт или LDAP. Смена пароля (≥ 8 символов) — только если портал
-            её требует при входе.
+            Вход по локальному аккаунту или через LDAP. После сброса пароля администратором
+            портал попросит задать новый (от 8 символов).
           </li>
           <li>
-            Сессия: Bearer на 3 ч. При истечении сборка в историю не пишется; черновик
-            сценария остаётся на устройстве, после входа можно продолжить. Logout очищает
-            конструктор.
+            Сессия длится 3 ч. Если она истекла, черновик сценария остаётся в браузере — после
+            входа можно продолжить. Выход очищает черновик.
           </li>
           <li>
-            <strong>ADMIN</strong>: пользователи и журнал. LDAP, GitLab и Grafana задаются в Consul и Vault.
+            <strong>ADMIN</strong> — пользователи и журнал действий. Настройки LDAP, GitLab и
+            Grafana хранятся в Consul и Vault.
           </li>
           <li>
-            <strong>USER</strong>: сценарии и свои прогоны; история сборок — до 20 записей.
+            <strong>USER</strong> — сценарии и свои прогоны. В истории хранятся до 30 последних
+            сборок; срок хранения задаётся на сервере (по умолчанию 30 дней) и виден в шапке
+            истории.
           </li>
           <li>
-            LDAP: логин = sAMAccountName. Роли в AD не синхронизируются — задаются в портале.
+            LDAP: логин — sAMAccountName. Роли из AD не подтягиваются: новый LDAP-пользователь
+            получает USER, роль меняет ADMIN.
           </li>
         </ul>
       </section>
@@ -146,7 +155,7 @@ function AboutDocs() {
                 <code>script_id</code>
               </td>
               <td>Сценарий / Запуск</td>
-              <td>Файл .jmx / .js / .zip (сборка или upload)</td>
+              <td>Файл .jmx, .js, .ts или .zip (из сборки или загруженный)</td>
             </tr>
             <tr>
               <td>
@@ -175,9 +184,8 @@ function ScenarioDocs() {
       <section>
         <h3>Обзор</h3>
         <p>
-          Мастер из 4 шагов. Модель <code>Scenario</code> общая; JMeter, k6 и Gatling —
-          артефакты на финальном шаге, и экран интенсивности перестраивается под выбранный
-          движок.
+          Мастер из 4 шагов. Сценарий общий для всех движков: JMeter, k6 или Gatling
+          выбирается на последнем шаге, и экран интенсивности подстраивается под него.
         </p>
         <ol>
           <li>
@@ -191,13 +199,13 @@ function ScenarioDocs() {
             экстракторы.
           </li>
           <li>
-            <strong>Интенсивность и сборка</strong> — RPS, AutoStop, сохранить / выгрузить /
-            к запуску.
+            <strong>Интенсивность и сборка</strong> — RPS, AutoStop, сохранение, выгрузка и
+            переход к запуску.
           </li>
         </ol>
         <p>
-          <strong>Пульс сценария</strong> над шагами: готовность 0–100, блокеры. При
-          блокерах сборка недоступна.
+          <strong>Пульс сценария</strong> над шагами показывает готовность 0–100 и блокеры.
+          Блокеры не мешают сохранить и выгрузить сборку, но перед запуском их лучше исправить.
         </p>
       </section>
 
@@ -205,12 +213,12 @@ function ScenarioDocs() {
         <h3>Источник и запросы</h3>
         <ul>
           <li>
-            OpenAPI — URL (JSON/YAML, Swagger UI) или вставка текста. Postman — только JSON
-            коллекции.
+            OpenAPI — URL (JSON/YAML, Swagger UI) или вставка текста. Postman — только
+            JSON-коллекция, без URL.
           </li>
           <li>
-            В пути <code>{"{id}"}</code> → Path-параметр (имя только из URL). Header /
-            Query / Body добавляются на шаге 3.
+            <code>{"{id}"}</code> в пути становится Path-параметром с именем из URL. Header,
+            Query и Body добавляются на шаге 3.
           </li>
         </ul>
       </section>
@@ -225,8 +233,12 @@ function ScenarioDocs() {
           <li>
             Экстракторы: JSONPath, Regex, Boundary. Порядок запросов важен.
           </li>
-          <li>Валидация: HTTP-код и опционально Contains по телу.</li>
-          <li>«Далее» недоступно, пока обязательные (*) параметры пусты.</li>
+          <li>Проверка ответа: HTTP-код и, при желании, подстрока в теле.</li>
+          <li>Кнопка «Далее» неактивна, пока не заполнены обязательные параметры.</li>
+          <li>
+            Как каждая настройка этого шага попадает в скрипт — в разделах{" "}
+            <strong>JMeter</strong>, <strong>k6</strong> и <strong>Gatling</strong>.
+          </li>
         </ul>
       </section>
 
@@ -240,24 +252,24 @@ function ScenarioDocs() {
             <strong>Поиск максимума</strong> — ступени до целевого RPS.
           </li>
           <li>
-            Группы запросов: связаны корреляцией или одним CSV — одна Thread Group / k6
-            scenario / Gatling scenario.
+            Группа — запросы, связанные корреляцией или общим CSV. В JMeter это Thread Group,
+            в k6 и Gatling — scenario.
           </li>
           <li>
-            <strong>Целевой RPS</strong> — HTTP-запросы/с на группу. JMeter режет сэмплы
-            таймером; k6 и Gatling инжектят итерации, поэтому портал делит:{" "}
-            <code>RPS / (сумма ×N)</code> — суммарный HTTP совпадает у всех трёх.
+            <strong>Целевой RPS</strong> — HTTP-запросов в секунду на группу. JMeter дозирует
+            сэмплы таймером, а k6 и Gatling запускают итерации, поэтому портал делит{" "}
+            <code>RPS / (сумма ×N)</code> — итоговый поток HTTP у всех трёх одинаков.
           </li>
           <li>
             <strong>Поиск максимума</strong>: у JMeter и Gatling ступени плоские (TST и{" "}
-            <code>incrementUsersPerSec</code>), у k6 между полками короткий разгон — jump в
-            ramping-arrival-rate не поддерживается.
+            <code>incrementUsersPerSec</code>), у k6 между полками короткий разгон — мгновенного
+            скачка в ramping-arrival-rate нет.
           </li>
           <li>
-            <strong>Метрики</strong>: JMeter — <code>InfluxdbBackendListenerClient</code> пишет
-            Influx line protocol в VictoriaMetrics; k6 — встроенные метрики и{" "}
-            <code>portal_errors</code>; Gatling OSS — HTML-отчёт и <code>simulation.log</code>,
-            real-time экспорта нет (Graphite удалён в 3.12).
+            <strong>Метрики</strong>: JMeter пишет в VictoriaMetrics через{" "}
+            <code>InfluxdbBackendListenerClient</code>, k6 — встроенные метрики и{" "}
+            <code>portal_errors</code> через Prometheus remote write. Gatling OSS даёт только
+            HTML-отчёт и <code>simulation.log</code> (Graphite удалён в 3.12).
           </li>
           <li>
             <strong>AutoStop</strong>: скользящее окно у JMeter (jpgc-autostop) и у Gatling
@@ -266,15 +278,14 @@ function ScenarioDocs() {
             задержки проверки, окна нет.
           </li>
           <li>
-            Кнопки: <strong>К запуску теста</strong> (основная) → сохраняет сборку и
-            открывает «Запуск»; <strong>Сохранить сборку</strong> — в историю;{" "}
+            <strong>К запуску</strong> сохраняет сборку и открывает «Запуск»;{" "}
+            <strong>Сохранить сборку</strong> — только в историю;{" "}
             <strong>Выгрузить скрипт</strong> — скачать файл без записи в историю.
           </li>
         </ul>
         <p className="hint">
-          JMeter на runner: плагины <code>jpgc-casutg</code>, <code>jpgc-tst</code>, при
-          AutoStop — <code>jpgc-autostop</code>. Метрики JMeter пишет штатный InfluxDB listener,
-          отдельный jar не нужен.
+          Для JMeter на runner нужны плагины <code>jpgc-casutg</code>, <code>jpgc-tst</code>, при
+          AutoStop — <code>jpgc-autostop</code>. Для метрик отдельный jar не нужен.
         </p>
       </section>
     </>
@@ -289,7 +300,7 @@ function EnginesDocs() {
         <p>
           Сценарий в портале один. Движок выбирается на шаге «Интенсивность и сборка»: из
           той же модели получаются <strong>JMeter .jmx</strong>, <strong>k6 .js</strong> или{" "}
-          <strong>Gatling .zip</strong> (Maven-проект). Целевой RPS везде — HTTP-запросы в
+          <strong>Gatling .zip</strong> (Maven-проект). Целевой RPS везде — HTTP-запросов в
           секунду на группу. Группа — запросы, связанные корреляцией или общим CSV.
         </p>
       </section>
@@ -298,7 +309,7 @@ function EnginesDocs() {
         <h3>JMeter</h3>
         <p>
           Классический GUI-инструмент на JVM. Портал собирает Test Plan: каждая группа →
-          Concurrency Thread Group + Throughput Shaping Timer. Целевой RPS режется по
+          Concurrency Thread Group + Throughput Shaping Timer. Целевой RPS дозируется по
           HTTP-сэмплам. Потоки = RPS × ожидаемая латентность. Повторы — Loop Controller.
         </p>
         <p>
@@ -322,7 +333,7 @@ function EnginesDocs() {
         <ul>
           <li>
             <strong>Плюсы.</strong> Привычный стек НТ, отладка в GUI, точное управление
-            сэмплами, живые метрики в Prometheus, скользящий AutoStop.
+            сэмплами, метрики в VictoriaMetrics по ходу прогона, скользящий AutoStop.
           </li>
           <li>
             <strong>Минусы.</strong> Тяжёлый JVM, плагины должны лежать в <code>lib/ext</code>{" "}
@@ -330,7 +341,7 @@ function EnginesDocs() {
           </li>
           <li>
             <strong>Особенность портала.</strong> Закрытая модель потоков + таймер открытой
-            нагрузки: TST режет выдачу, CTG держит нужное число потоков.
+            нагрузки: TST ограничивает выдачу, CTG держит нужное число потоков.
           </li>
         </ul>
       </section>
@@ -340,21 +351,22 @@ function EnginesDocs() {
         <p>
           Инструмент Grafana Labs: один бинарник, сценарий на JavaScript. Портал собирает
           скрипт, где каждая группа — отдельный k6 scenario с{" "}
-          <code>ramping-arrival-rate</code>. k6 инжектит <em>итерации</em>, не HTTP-сэмплы:
-          <code>arrival-rate = RPS / (сумма ×N)</code>, чтобы суммарный HTTP совпал с
+          <code>ramping-arrival-rate</code>. k6 запускает <em>итерации</em>, а не HTTP-сэмплы:{" "}
+          <code>arrival-rate = RPS / (сумма ×N)</code>, чтобы суммарный поток HTTP совпал с
           JMeter.
         </p>
         <p>
-          <strong>Артефакт:</strong> zip со <code>script.js</code>, <code>lib/</code> (k6-utils,
-          при CSV ещё PapaParse) и крупными CSV. Запуск из распакованной папки:{" "}
-          <code>k6 run script.js</code>. Пул VU = HTTP RPS × латентность × 1.5.
-          Метрики — встроенные (<code>http_req_*</code>) плюс <code>portal_errors</code>{" "}
-          (провал checks или сеть). Вывод — флаги <code>--out</code>.
+          <strong>Артефакт:</strong> zip со <code>script.js</code>, <code>vm.json</code> (адрес
+          VictoriaMetrics), <code>lib/</code> (k6-utils, при CSV ещё PapaParse) и крупными CSV.
+          Запуск из распакованной папки: <code>k6 run script.js</code>. Пул VU = HTTP RPS ×
+          латентность × 1,5. Метрики — встроенные (<code>http_req_*</code>) плюс{" "}
+          <code>portal_errors</code> (провал checks или сетевая ошибка), в VictoriaMetrics
+          уходят через <code>experimental-prometheus-rw</code>.
         </p>
         <p>
-          <strong>Постоянная нагрузка:</strong> разгон arrival от min(1, RPS) до цели, полка.
+          <strong>Постоянная нагрузка:</strong> разгон arrival от min(1, RPS) до цели, полка.{" "}
           <strong>Поиск максимума:</strong> stages со ступенями; между полками короткий
-          разгон (~10% длительности ступени) — у executor нет мгновенного jump.
+          разгон (~10 % длительности ступени) — мгновенного скачка у executor нет.
         </p>
         <p>
           <strong>AutoStop:</strong> thresholds с <code>abortOnFail</code> и{" "}
@@ -396,14 +408,14 @@ function EnginesDocs() {
         </p>
         <p>
           <strong>Постоянная нагрузка:</strong>{" "}
-          <code>rampUsersPerSec</code> + <code>constantUsersPerSec().randomized()</code>.
+          <code>rampUsersPerSec</code> + <code>constantUsersPerSec().randomized()</code>.{" "}
           <strong>Поиск максимума:</strong>{" "}
           <code>incrementUsersPerSec().times().eachLevelLasting()</code> — плоские полки, как
           TST.
         </p>
         <p>
           <strong>AutoStop:</strong> скользящее окно в Simulation +{" "}
-          <code>crashLoadGeneratorIf</code> (ненулевой код выхода) и assertions в конце.
+          <code>crashLoadGeneratorIf</code> (ненулевой код выхода) и assertions в конце.{" "}
           <strong>Генераторы:</strong> EL <code>randomUuid</code> / <code>randomInt</code> /{" "}
           <code>currentDate</code> на каждый запрос; счётчик — общий фидер на итерацию;
           randomString — новое значение перед HTTP. CSV — <code>csv().circular()</code> или{" "}
@@ -415,8 +427,8 @@ function EnginesDocs() {
             DSL ловит ошибки до прогона, HTML-отчёт из коробки.
           </li>
           <li>
-            <strong>Минусы.</strong> На runner нужны JDK и Maven; OSS отдаёт отчёт после
-            прогона, не live-скрейп; счётчик общий на всех пользователей.
+            <strong>Минусы.</strong> На runner нужны JDK и Maven; в OSS метрики доступны
+            только после прогона; счётчик общий на всех пользователей.
           </li>
           <li>
             <strong>Особенность портала.</strong> <code>throttle</code> не используется:
@@ -428,18 +440,457 @@ function EnginesDocs() {
   );
 }
 
+function JmeterParamsDocs() {
+  return (
+    <>
+      <section>
+        <h3>Корреляция и параметры</h3>
+        <p>
+          Шаг общий для всех движков. В JMeter из него собирается HTTP Request, Header
+          Manager, экстракторы и CSV Data Set внутри группы потоков.
+        </p>
+        <p>
+          <code>{"{имя}"}</code> в пути и теле заменяется значением параметра.{" "}
+          <code>{"${имя}"}</code> остаётся переменной JMeter и подставляется уже в рантайме.
+        </p>
+      </section>
+
+      <section>
+        <h3>Куда попадает параметр</h3>
+        <ul>
+          <li>
+            <strong>Path.</strong> <code>{"{имя}"}</code> вписывается в <code>HTTPSampler.path</code>.
+            Свой URL запроса заменяет базовый адрес.
+          </li>
+          <li>
+            <strong>Query.</strong> Аргумент HTTP Request (<code>HTTPArgument</code>),{" "}
+            <code>always_encode</code> выключен: значение уходит как есть. Пустое имя
+            пропускается.
+          </li>
+          <li>
+            <strong>Header.</strong> HTTP Header Manager. Параметр с тем же именем
+            перекрывает заголовок, пришедший из импорта.
+          </li>
+          <li>
+            <strong>Body.</strong> <code>{"{имя}"}</code> заменяется в сыром теле (
+            <code>postBodyRaw</code>). Если у тела задан Content-Type и такого заголовка ещё
+            нет, он добавляется.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Константа</h3>
+        <p>
+          Строка попадает в запрос без обработки порталом. <code>{"${переменная}"}</code> и{" "}
+          <code>{"${__функция()}"}</code> вычисляет сам JMeter.
+        </p>
+      </section>
+
+      <section>
+        <h3>Генератор</h3>
+        <ul>
+          <li>
+            <strong>UUID</strong> — <code>{"${__UUID()}"}</code>.
+          </li>
+          <li>
+            <strong>Случайное число</strong> — <code>{"${__Random(мин,макс)}"}</code>. Оба края
+            входят. Пустые поля — 0 и 1&nbsp;000&nbsp;000.
+          </li>
+          <li>
+            <strong>Случайная строка</strong> —{" "}
+            <code>{"${__RandomString(длина,алфавит)}"}</code>. Длина по умолчанию 8, алфавит —
+            латинские строчные и цифры. Новое значение на каждый запрос.
+          </li>
+          <li>
+            <strong>Счётчик</strong> — <code>CounterConfig</code> на группу, отдельный на
+            каждый поток (<code>per_user</code>). В запрос подставляется{" "}
+            <code>{"${имя параметра}"}</code>. Одно значение на итерацию потока: повторы ×N его
+            не увеличивают. Максимум 0 — без потолка, после максимума счёт начинается со
+            старта. Формат — маска счётчика, например <code>000</code>.
+          </li>
+          <li>
+            <strong>Метка времени</strong> — <code>{"${__time(формат)}"}</code>. Пустой формат —
+            миллисекунды. Текст формата — SimpleDateFormat.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Корреляция</h3>
+        <p>
+          Источник «Корреляция» записывается как <code>{"${переменная}"}</code>. Переменная
+          появляется, когда экстрактор предыдущего запроса той же группы сохранил ответ под
+          этим именем.
+        </p>
+      </section>
+
+      <section>
+        <h3>CSV</h3>
+        <p>
+          Колонка становится <code>{"${колонка}"}</code>. Датасет, привязанный к запросу, —
+          элемент на группе: одна строка на итерацию, её видят все запросы группы.
+        </p>
+        <ul>
+          <li>
+            <strong>По порядку</strong> — CSV Data Set Config: разделитель запятая,{" "}
+            <code>quotedData</code>, первая строка — заголовки, <code>recycle</code>, общий
+            на все потоки (<code>shareMode.all</code>).
+          </li>
+          <li>
+            <strong>Случайный порядок</strong> — плагин bzm Random CSV Data Set. У него нет
+            рабочей настройки кавычек, поэтому файл пишется без кавычек, а разделитель
+            выбирается так, чтобы его не было в ячейках.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Извлечь из ответа</h3>
+        <p>
+          Экстрактор висит на сэмплере и пишет переменную потока. В форме номер совпадения
+          всегда 1, запасное значение — <code>NOT_FOUND</code>. Если в сценарии заданы другие,
+          в .jmx уходят они.
+        </p>
+        <ul>
+          <li>
+            <strong>JSONPath</strong> — JSON Extractor: выражение, номер совпадения, default.
+          </li>
+          <li>
+            <strong>Regex</strong> — Regex Extractor по телу ответа, шаблон <code>$1$</code>{" "}
+            (первая группа).
+          </li>
+          <li>
+            <strong>Boundary</strong> — выражение <code>слева|справа</code> режется по первой
+            вертикальной черте и кладётся в Boundary Extractor.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Проверка ответа</h3>
+        <ul>
+          <li>
+            <strong>Код</strong> — Response Assertion по полю кода, сравнение Equals.
+          </li>
+          <li>
+            <strong>Тело содержит</strong> — Response Assertion по телу, тип Contains.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Одинаковые имена</h3>
+        <p>
+          Два query-параметра с одним именем уходят двумя аргументами. В пути и теле{" "}
+          <code>{"{имя}"}</code> заменяется первым параметром с этим именем: после замены
+          скобок в строке уже нет. Заголовок с тем же именем остаётся один, его значение берётся
+          из параметра. Счётчик, колонка CSV и экстрактор с одним именем пишут в одну переменную
+          потока и затирают друг друга.
+        </p>
+      </section>
+    </>
+  );
+}
+
+function K6ParamsDocs() {
+  return (
+    <>
+      <section>
+        <h3>Корреляция и параметры</h3>
+        <p>
+          Группа становится функцией <code>export function groupN()</code>. На итерацию
+          заводятся объект <code>vars</code> для извлечений и объект <code>row</code> для
+          строки CSV. Запросы группы идут друг за другом внутри этой функции.
+        </p>
+        <p>
+          <code>{"{имя}"}</code> в пути и теле склеивается в JS-выражение и в текст скрипта
+          плейсхолдером не остаётся. <code>{"${имя}"}</code> внутри константы разбирает{" "}
+          <code>interp</code> уже во время прогона.
+        </p>
+      </section>
+
+      <section>
+        <h3>Куда попадает параметр</h3>
+        <ul>
+          <li>
+            <strong>Path.</strong> Значение <code>{"{имя}"}</code> проходит через{" "}
+            <code>encodeURIComponent</code>. Собственный URL запроса не склеивается с базовым.
+          </li>
+          <li>
+            <strong>Query.</strong> Пары попадают в query-string, значение кодируется{" "}
+            <code>encodeURIComponent</code>.
+          </li>
+          <li>
+            <strong>Header.</strong> Сначала заголовки из импорта, затем параметры. Одинаковое
+            имя перекрывается параметром.
+          </li>
+          <li>
+            <strong>Body.</strong> <code>{"{имя}"}</code> подставляется без URL-кодирования.
+            Если в теле нет таких скобок, весь текст проходит через <code>interp</code>.
+            Content-Type из тела ставится, только если заголовка ещё нет.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Константа</h3>
+        <p>
+          <code>interp</code> заменяет <code>{"${имя}"}</code> из <code>vars</code>, затем из
+          строки CSV. Узнаёт функции JMeter: <code>__UUID</code>, <code>__Random</code>,{" "}
+          <code>__RandomString</code>, <code>__time</code>.
+        </p>
+      </section>
+
+      <section>
+        <h3>Генератор</h3>
+        <ul>
+          <li>
+            <strong>UUID</strong> — <code>uuidv4()</code> из k6-utils.
+          </li>
+          <li>
+            <strong>Случайное число</strong> — <code>randomIntBetween(мин, макс)</code>, оба
+            края входят.
+          </li>
+          <li>
+            <strong>Случайная строка</strong> — <code>randomString(длина, алфавит)</code>.
+            Новое значение на каждый запрос.
+          </li>
+          <li>
+            <strong>Счётчик</strong> — <code>nextCounter</code> по имени параметра. Одно
+            значение на итерацию VU (<code>__ITER</code>), не на каждый HTTP: повторы ×N
+            видят одно и то же число. Максимум 0 — без потолка. Формат — длина маски:{" "}
+            <code>000</code> дополняет число нулями слева до трёх знаков.
+          </li>
+          <li>
+            <strong>Метка времени</strong> — <code>tsFormat</code>. Пустой формат —
+            миллисекунды. Разбираются токены <code>yyyy</code>, <code>MM</code>,{" "}
+            <code>dd</code>, <code>HH</code>, <code>mm</code>, <code>ss</code>; текст в
+            одинарных кавычках, как <code>&apos;T&apos;</code>, остаётся как есть. Это не
+            полный SimpleDateFormat.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Корреляция</h3>
+        <p>
+          Источник читает <code>vars[переменная]</code>. Если извлечения не было, в запрос
+          уходит пустая строка. <code>vars</code> живёт одну итерацию группы и не виден
+          соседней группе.
+        </p>
+      </section>
+
+      <section>
+        <h3>CSV</h3>
+        <p>
+          Датасет — <code>SharedArray</code>. Небольшой набор вписан в скрипт, большой читается
+          PapaParse из файла рядом со скриптом (первая строка — имена колонок). На итерацию
+          группы берётся одна строка: случайный индекс или{" "}
+          <code>iterationInTest % длина</code>. Источник «CSV» — поле <code>row[колонка]</code>.
+        </p>
+      </section>
+
+      <section>
+        <h3>Извлечь из ответа</h3>
+        <p>
+          После <code>http.request</code> результат пишется в <code>vars</code>. Номер
+          совпадения в форме — 1, запасное значение — <code>NOT_FOUND</code>.
+        </p>
+        <ul>
+          <li>
+            <strong>JSONPath</strong> — обход <code>$.a.b[0]</code> по точкам и индексам.
+            Фильтров, рекурсии и условий JSONPath нет: такое выражение вернёт default.
+          </li>
+          <li>
+            <strong>Regex</strong> — поиск по телу. Если в выражении есть группа, берётся она,
+            иначе всё совпадение. Номер считается с 1.
+          </li>
+          <li>
+            <strong>Boundary</strong> — <code>слева|справа</code> собирается в нежадную
+            регулярку и читается тем же способом, что Regex.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Проверка ответа</h3>
+        <p>
+          Код и подстрока тела — это <code>check</code>. Тот же провал, плюс статус 0, попадает
+          в <code>portal_errors</code>. Сырой <code>http_req_failed</code> для этого не
+          используется: провал проверки и сетевой обрыв считаются отдельно.
+        </p>
+      </section>
+
+      <section>
+        <h3>Одинаковые имена</h3>
+        <p>
+          В пути и теле при двух параметрах с одним именем в склейку попадает последний. Два
+          query с одним именем уходят двумя парами. Счётчик, колонка и переменная извлечения с
+          одним именем делят одну ячейку <code>vars</code> или счётчика и перезаписывают её.
+        </p>
+      </section>
+    </>
+  );
+}
+
+function GatlingParamsDocs() {
+  return (
+    <>
+      <section>
+        <h3>Корреляция и параметры</h3>
+        <p>
+          Группа — <code>scenario(...)</code> в <code>PortalSimulation.java</code>. Значения
+          попадают в сессию и читаются Gatling EL: <code>{"#{имя}"}</code>. Портал заранее
+          переводит <code>{"${имя}"}</code> из констант в этот синтаксис.
+        </p>
+        <p>
+          <code>{"{имя}"}</code> в пути и теле заменяется выражением EL до того, как строка
+          попадёт в <code>http(...)</code>. Уже записанные <code>{"#{…}"}</code> и{" "}
+          <code>{"${…}"}</code> при этой замене не трогаются.
+        </p>
+      </section>
+
+      <section>
+        <h3>Куда попадает параметр</h3>
+        <ul>
+          <li>
+            <strong>Path.</strong> Значение встраивается в URL запроса. Собственный URL
+            заменяет базовый.
+          </li>
+          <li>
+            <strong>Query.</strong> <code>.queryParam(имя, значение)</code>. Кодирование
+            выполняет Gatling.
+          </li>
+          <li>
+            <strong>Header.</strong> <code>.header</code>. Параметр перекрывает заголовок с
+            тем же именем.
+          </li>
+          <li>
+            <strong>Body.</strong> <code>StringBody</code> после замены <code>{"{имя}"}</code>.
+            Content-Type из тела добавляется, если такого заголовка нет.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Константа</h3>
+        <p>
+          <code>{"${переменная}"}</code> становится <code>{"#{переменная}"}</code> и читается из
+          сессии. Функции вида <code>{"${__UUID()}"}</code> Gatling не вычисляет: для
+          генерации нужно выбрать источник «Генератор», а не вписать функцию JMeter в
+          константу.
+        </p>
+      </section>
+
+      <section>
+        <h3>Генератор</h3>
+        <ul>
+          <li>
+            <strong>UUID</strong> — <code>{"#{randomUuid()}"}</code>.
+          </li>
+          <li>
+            <strong>Случайное число</strong> — <code>{"#{randomInt(мин, макс+1)}"}</code>. У
+            Gatling верхняя граница не входит, у портала входит, поэтому к максимуму
+            прибавляется 1.
+          </li>
+          <li>
+            <strong>Случайная строка</strong> — <code>session.set</code> непосредственно перед
+            HTTP. Новое значение на каждый запрос. Длина по умолчанию 8, алфавит — латинские
+            строчные и цифры.
+          </li>
+          <li>
+            <strong>Счётчик</strong> — общий <code>AtomicLong</code> на всех виртуальных
+            пользователей и фидер <code>GENERATED_VALUES</code>. Одно значение на итерацию
+            сценария, повторы ×N его не двигают. В запрос попадает{" "}
+            <code>{"#{имя параметра}"}</code>. Максимум 0 — без потолка. Формат задаёт число
+            ведущих нулей длиной маски.
+          </li>
+          <li>
+            <strong>Метка времени</strong> — пустой формат даёт{" "}
+            <code>{"#{currentTimeMillis()}"}</code>. Иначе{" "}
+            <code>{"#{currentDate(шаблон)}"}</code>. Шаблон из посторонних символов заменяется
+            на <code>yyyy-MM-dd&apos;T&apos;HH:mm:ss</code>.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Корреляция</h3>
+        <p>
+          Источник — <code>{"#{переменная}"}</code>. Имя в EL очищается до букв, цифр и
+          подчёркивания; если оно начинается с цифры, спереди добавляется <code>v_</code>. То
+          же имя использует <code>saveAs</code> у извлечения.
+        </p>
+      </section>
+
+      <section>
+        <h3>CSV</h3>
+        <p>
+          Файл лежит в <code>src/test/resources</code>. По порядку —{" "}
+          <code>csv(...).circular()</code>, случайно — <code>random()</code>.{" "}
+          <code>.feed</code> стоит на сценарии: одна строка на итерацию, все запросы группы
+          читают её как <code>{"#{колонка}"}</code>.
+        </p>
+      </section>
+
+      <section>
+        <h3>Извлечь из ответа</h3>
+        <p>
+          Это <code>check(...).find(n).withDefault(...).saveAs(...)</code>. Номер в Gatling
+          считается с нуля, поэтому портал передаёт номер совпадения минус 1. В форме номер —
+          1, default — <code>NOT_FOUND</code>.
+        </p>
+        <ul>
+          <li>
+            <strong>JSONPath</strong> — <code>jsonPath(выражение)</code>.
+          </li>
+          <li>
+            <strong>Regex</strong> — <code>regex(выражение)</code>.
+          </li>
+          <li>
+            <strong>Boundary</strong> — <code>слева|справа</code> превращается в{" "}
+            <code>regex(слева(.*?)справа)</code>, границы экранируются.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Проверка ответа</h3>
+        <ul>
+          <li>
+            <strong>Код</strong> — <code>status().is(код)</code>.
+          </li>
+          <li>
+            <strong>Тело содержит</strong> — <code>substring(текст).exists()</code>.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h3>Одинаковые имена</h3>
+        <p>
+          Два query с одним именем — два <code>queryParam</code>. В пути и теле{" "}
+          <code>{"{имя}"}</code> заменяется первым параметром с этим именем. Общий счётчик и{" "}
+          <code>saveAs</code> с тем же именем пишут в одну переменную сессии.
+        </p>
+      </section>
+    </>
+  );
+}
+
 function RunDocs() {
   return (
     <>
       <section>
         <h3>Обзор</h3>
         <p>
-          Раздел <strong>«Запуск»</strong>: создать прогон по готовой сборке или
-          загруженному скрипту, указать задачу Jira, смотреть статусы.
+          Раздел <strong>«Запуск»</strong> запускает тест в GitLab CI по готовой сборке или
+          загруженному скрипту и показывает статусы прогонов.
         </p>
         <ol>
           <li>
-            <strong>Новый запуск</strong> — Jira, скрипт, параметры runner.
+            <strong>Новый запуск</strong> — Jira, скрипт, время, сервис и ресурсы runner.
           </li>
           <li>
             <strong>Прогоны</strong> — список с фильтром.
@@ -457,29 +908,33 @@ function RunDocs() {
             <strong>Задача в Jira</strong> (<code>test_id</code>) — обязательна.
           </li>
           <li>
-            Скрипт: из истории сборок модуля «Сценарий» или загрузка .jmx / .js (+ опционально
-            ссылка на git).
+            Скрипт — из истории сборок или файл .jmx, .js, .ts или .zip. Для файла выберите
+            движок: по .zip его не определить.
           </li>
           <li>
             Движок, имя сценария и Target URL берутся из сборки — заново не вводятся.
           </li>
           <li>
-            Для JMeter: память JVM (МБ). Для k6 и Gatling дополнительных полей нет — профиль
-            уже в артефакте. Точка входа Gatling — <code>pom.xml</code> проекта из архива.
+            Кластер, namespace, сервис и контейнер нужны модулю «Анализ». Если они заполнены,
+            отчёт соберётся сам после окончания теста.
+          </li>
+          <li>
+            CPU и Memory — ресурсы runner; хип JVM образ берёт как долю от Memory. Профиль нагрузки
+            уже в скрипте. Точка входа Gatling — <code>pom.xml</code> из архива.
           </li>
         </ul>
         <p className="hint">
-          Сейчас кнопка создаёт карточку прогона (<code>run_id</code>, статус «в очереди»).
-          Вызов GitLab Trigger Pipeline будет подключён к той же кнопке.
+          «Запустить тест» создаёт прогон (<code>run_id</code>), кладёт скрипт в S3 и запускает
+          пайплайн GitLab CI. Статусы приходят из GitLab через webhook.
         </p>
       </section>
 
       <section>
         <h3>GitLab и LDAP</h3>
         <p>
-          В настройках портала этих блоков нет. URL, project, репозиторий, Grafana и параметры
-          LDAP читаются из Consul, секреты — из Vault. Локально те же значения можно задать через
-          env (<code>GITLAB_TRIGGER_TOKEN</code>, <code>GITLAB_WEBHOOK_SECRET</code> и остальные).
+          Настройки GitLab, Grafana и LDAP задаются не в портале: параметры — в Consul, секреты —
+          в Vault. Локально их можно передать через переменные окружения (
+          <code>GITLAB_TRIGGER_TOKEN</code>, <code>GITLAB_WEBHOOK_SECRET</code> и другие).
         </p>
         <p>
           Webhook: <code>POST /api/runs/webhook/gitlab</code>, заголовок{" "}
@@ -665,7 +1120,7 @@ function TheoryDocs() {
         <p>
           Проверить, как система ведёт себя под ожидаемой и пиковой нагрузкой: хватает ли
           мощности, где узкие места, не ломается ли SLA по времени ответа и ошибкам.
-          Портал закрывает путь «спека → скрипт → прогон» без ручной сборки .jmx/.js с нуля.
+          Портал проводит по пути «спецификация → скрипт → прогон» без написания скрипта с нуля.
         </p>
       </section>
 
@@ -708,10 +1163,9 @@ function TheoryDocs() {
         <h3>Модели нагрузки</h3>
         <ul>
           <li>
-            <strong>Open model (arrival rate)</strong> — задаём поток HTTP-запросов (RPS).
-            JMeter режет сэмплы таймером. k6 и Gatling задают старты итерации группы: портал
-            делит целевой RPS на число HTTP за итерацию, чтобы цифры совпали. У Gatling пул
-            пользователей не нужен — они создаются по мере поступления.
+            <strong>Open model (arrival rate)</strong> — задаём поток HTTP-запросов (RPS). k6 и
+            Gatling задают старты итераций, поэтому портал делит RPS на число запросов в
+            итерации — поток совпадает с JMeter.
           </li>
           <li>
             <strong>Closed model (VU)</strong> — фиксированное число пользователей, которые
@@ -744,7 +1198,7 @@ function TheoryDocs() {
         <p>
           Цепочка login → token → защищённый API должна идти в одной группе запросов:
           экстрактор на ответе, параметр «корреляция» на следующем шаге. Иначе скрипт бьёт
-          «пустыми» или устаревшими токенами и greзит картину ошибок.
+          «пустыми» или устаревшими токенами и искажает картину ошибок.
         </p>
         <ul>
           <li>CSV — разные пользователи/данные без хардкода.</li>
@@ -757,8 +1211,8 @@ function TheoryDocs() {
         <h3>AutoStop</h3>
         <p>
           Автоостановка при превышении доли ошибок или среднего времени ответа за окно
-          времени. Экономит стенд и сразу фиксирует точку отказа. Включайте на поиск
-          максимума и длинных прогонах.
+          времени. Бережёт стенд и фиксирует точку отказа. Включайте для поиска максимума и
+          длинных прогонов.
         </p>
       </section>
 
@@ -766,21 +1220,22 @@ function TheoryDocs() {
         <h3>Практический чеклист перед прогоном</h3>
         <ol>
           <li>«Пульс сценария» без блокеров; корреляции и CSV согласованы.</li>
-          <li>Target URL — стенд, не prod (пока нет модуля «Стенд» — проверяйте base URL).</li>
+          <li>Target URL ведёт на стенд, а не в prod: модуля «Стенд» пока нет, проверьте адрес сами.</li>
           <li>
             Выберите движок: JMeter (плагины на runner), k6 или Gatling (JDK 17+ и Maven на
             runner).
           </li>
           <li>
-            Сохраните сборку → «Запуск»: укажите Jira <code>test_id</code>, для JMeter —
-            разумный heap.
+            Сохраните сборку и перейдите в «Запуск»: укажите задачу Jira (<code>test_id</code>)
+            и сервис в кластере для «Анализа».
           </li>
           <li>
-            Договоритесь о наблюдаемости: Grafana задаётся в Consul, метка прогона — run_id.
+            Проверьте наблюдаемость: Grafana задаётся в Consul, метка прогона —{" "}
+            <code>run_id</code>.
           </li>
           <li>
-            После прогона сохраните <code>run_id</code> — им будут пользоваться Анализ и
-            Отчёт.
+            После прогона сохраните <code>run_id</code> — по нему работают «Анализ» и будущий
+            «Отчёт».
           </li>
         </ol>
       </section>
@@ -830,7 +1285,7 @@ export function Documentation({ open, onClose }: { open: boolean; onClose: () =>
               НТ · Портал · справка
             </p>
           </div>
-          <button type="button" className="ghost small" onClick={onClose}>
+          <button type="button" className="ghost small" onClick={onClose} aria-label="Закрыть">
             ✕
           </button>
         </div>
@@ -856,6 +1311,9 @@ export function Documentation({ open, onClose }: { open: boolean; onClose: () =>
             {section === "about" && <AboutDocs />}
             {section === "scenario" && <ScenarioDocs />}
             {section === "engines" && <EnginesDocs />}
+            {section === "jmeter" && <JmeterParamsDocs />}
+            {section === "k6" && <K6ParamsDocs />}
+            {section === "gatling" && <GatlingParamsDocs />}
             {section === "run" && <RunDocs />}
             {section === "theory" && <TheoryDocs />}
             {section === "environment" && <SoonBlock title="Стенд" />}
